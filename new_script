@@ -1,8 +1,8 @@
-import praw
 import pandas as pd
 import numpy as np
 import re
 import time
+import json
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -13,12 +13,11 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from urllib.parse import urlparse
 import os
 
-# Download necessary NLTK data, including punkt_tab for sentence tokenization
+# Download necessary NLTK data
 try:
     nltk.download('vader_lexicon', quiet=True)
     nltk.download('punkt', quiet=True)
     nltk.download('stopwords', quiet=True)
-    nltk.download('punkt_tab', quiet=True)
 except:
     print("NLTK download failed but continuing...")
 
@@ -37,7 +36,8 @@ def extract_domain(url):
 credible_domains = [
     "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "npr.org", 
     "washingtonpost.com", "nytimes.com", "wsj.com", "economist.com",
-    "hindustantimes.com", "indianexpress.com", "thehindu.com", "ndtv.com"
+    "hindustantimes.com", "indianexpress.com", "thehindu.com", "ndtv.com",
+    "youtube.com"  # Added YouTube as it can contain credible content
 ]
 
 # List of known problematic domains
@@ -64,9 +64,112 @@ def get_text_complexity(text):
         "sentence_count": sentence_count
     }
 
-# Option 1: Use saved sample data if API fails
+# Function to load data from local JSON file
+def load_local_json_data(file_path="mumbai_reddit_posts.json"):
+    print(f"Loading data from local file: {file_path}")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            posts = json.load(f)
+        
+        all_posts_data = []
+        for post in posts:
+            try:
+                post_data = {
+                    "id": hash(post["title"]),  # Generate an ID based on title
+                    "title": post["title"],
+                    "url": post["url"],
+                    "domain": extract_domain(post["url"]),
+                    "is_self": "reddit.com" in post["url"],
+                    "selftext": "",  # JSON doesn't contain selftext
+                    "score": post["score"],
+                    "upvote_ratio": 0.8,  # Default value as it's not in the JSON
+                    "num_comments": post["comments"],
+                    "created_utc": post["created_utc"],
+                    "post_age_days": (time.time() - post["created_utc"]) / (60 * 60 * 24),
+                    "author": post["author"],
+                    "author_created_utc": time.time() - np.random.randint(30, 1095) * 86400,  # Random author age
+                    "author_age_days": np.random.randint(30, 1095),  # Random between 1 month and 3 years
+                    "author_comment_karma": np.random.randint(100, 10000),  # Random karma
+                    "author_link_karma": np.random.randint(50, 5000),  # Random karma
+                    "author_has_verified_email": np.random.choice([True, False], p=[0.8, 0.2]),  # 80% chance of verified
+                }
+                
+                # Analyze sentiment from title (since we don't have selftext)
+                sentiment = sid.polarity_scores(post["title"])
+                post_data["sentiment_neg"] = sentiment["neg"]
+                post_data["sentiment_neu"] = sentiment["neu"]
+                post_data["sentiment_pos"] = sentiment["pos"]
+                post_data["sentiment_compound"] = sentiment["compound"]
+                
+                # Text complexity
+                complexity = get_text_complexity(post["title"])
+                post_data["word_count"] = complexity["word_count"]
+                post_data["avg_word_length"] = complexity["avg_word_length"]
+                post_data["sentence_count"] = complexity["sentence_count"]
+                
+                # Domain credibility
+                domain = extract_domain(post["url"])
+                post_data["domain_is_credible"] = 1 if domain in credible_domains else 0
+                post_data["domain_is_problematic"] = 1 if domain in problematic_domains else 0
+                
+                # Comment sentiment (random since we don't have actual comments)
+                num_comments = min(post["comments"], 5)
+                if num_comments > 0:
+                    comment_sentiments = np.random.uniform(-0.5, 0.8, num_comments)
+                    post_data["avg_comment_sentiment"] = np.mean(comment_sentiments)
+                    post_data["comment_sentiment_variance"] = np.var(comment_sentiments)
+                else:
+                    post_data["avg_comment_sentiment"] = 0
+                    post_data["comment_sentiment_variance"] = 0
+                
+                all_posts_data.append(post_data)
+            except Exception as e:
+                print(f"Error processing post: {str(e)}")
+                continue
+        
+        # Add some synthetic fake news posts to create a balanced dataset
+        num_real_posts = len(all_posts_data)
+        for i in range(num_real_posts):
+            fake_post_data = {
+                "id": f"fake{i}",
+                "title": f"SHOCKING: {np.random.choice(['Mumbai', 'Maharashtra', 'India'])} {np.random.choice(['scandal', 'conspiracy', 'secret', 'cover-up'])} exposed!",
+                "url": f"https://questionablenews{i}.com/article{i}",
+                "domain": f"questionablenews{i}.com",
+                "is_self": np.random.choice([True, False], p=[0.3, 0.7]),
+                "selftext": "This incredible story has been suppressed by mainstream media!" if np.random.random() < 0.3 else "",
+                "score": np.random.randint(5, 200),
+                "upvote_ratio": np.random.uniform(0.4, 0.7),
+                "num_comments": np.random.randint(5, 50),
+                "created_utc": time.time() - np.random.randint(1, 15) * 86400,
+                "post_age_days": np.random.randint(1, 15),
+                "author": f"user{i+100}",
+                "author_created_utc": time.time() - np.random.randint(1, 180) * 86400,
+                "author_age_days": np.random.randint(1, 180),
+                "author_comment_karma": np.random.randint(10, 1000),
+                "author_link_karma": np.random.randint(5, 500),
+                "author_has_verified_email": np.random.choice([True, False], p=[0.4, 0.6]),
+                "sentiment_neg": np.random.uniform(0.1, 0.5),
+                "sentiment_neu": np.random.uniform(0.3, 0.6),
+                "sentiment_pos": np.random.uniform(0.1, 0.3),
+                "sentiment_compound": np.random.uniform(-0.5, 0.3),
+                "word_count": np.random.randint(5, 15),
+                "avg_word_length": np.random.uniform(3.5, 5.5),
+                "sentence_count": np.random.randint(1, 3),
+                "domain_is_credible": 0,
+                "domain_is_problematic": np.random.choice([0, 1], p=[0.7, 0.3]),
+                "avg_comment_sentiment": np.random.uniform(-0.3, 0.2),
+                "comment_sentiment_variance": np.random.uniform(0.1, 0.4)
+            }
+            all_posts_data.append(fake_post_data)
+        
+        return pd.DataFrame(all_posts_data)
+    except Exception as e:
+        print(f"Error loading JSON data: {str(e)}")
+        return use_sample_data()  # Fallback to sample data
+
+# Use sample data as a fallback (same as original code)
 def use_sample_data():
-    print("Using sample data instead of live Reddit API...")
+    print("Using sample data instead...")
     
     sample_data = []
     
@@ -138,111 +241,18 @@ def use_sample_data():
     
     return pd.DataFrame(sample_data)
 
-# Option 2: Try to use the Reddit API with proper error handling
-def collect_reddit_data_safely():
-    try:
-        reddit = praw.Reddit(
-            client_id="F2AyVPKAxPApH3arBONu9w",
-            client_secret="06NmSk2W3V_nd2kllhnzsp1Oq3IRMA",
-            user_agent="script:fakenews:1.0 (by u/Amazing-Bite-957)"
-        )
-        username = reddit.user.me()
-        if not username:
-            print("Reddit API connection failed silently - using sample data instead")
-            return use_sample_data()
-        
-        subreddits = ["news", "worldnews", "politics", "mumbai", "science", "technology"]
-        all_posts_data = []
-        for subreddit_name in subreddits:
-            print(f"Collecting data from r/{subreddit_name}...")
-            subreddit = reddit.subreddit(subreddit_name)
-            try:
-                for post in subreddit.hot(limit=10):
-                    try:
-                        post_data = {
-                            "id": post.id,
-                            "title": post.title,
-                            "url": post.url,
-                            "domain": extract_domain(post.url),
-                            "is_self": post.is_self,
-                            "selftext": post.selftext,
-                            "score": post.score,
-                            "upvote_ratio": post.upvote_ratio,
-                            "num_comments": post.num_comments,
-                            "created_utc": post.created_utc,
-                            "post_age_days": (time.time() - post.created_utc) / (60 * 60 * 24)
-                        }
-                        
-                        if post.author:
-                            post_data["author"] = post.author.name
-                            post_data["author_created_utc"] = post.author.created_utc
-                            post_data["author_age_days"] = (time.time() - post.author.created_utc) / (60 * 60 * 24)
-                            post_data["author_comment_karma"] = post.author.comment_karma
-                            post_data["author_link_karma"] = post.author.link_karma
-                            post_data["author_has_verified_email"] = post.author.has_verified_email
-                        else:
-                            post_data["author"] = "[deleted]"
-                            post_data["author_created_utc"] = None
-                            post_data["author_age_days"] = None
-                            post_data["author_comment_karma"] = None
-                            post_data["author_link_karma"] = None
-                            post_data["author_has_verified_email"] = None
-                        
-                        combined_text = post.title + " " + (post.selftext if post.selftext else "")
-                        sentiment = sid.polarity_scores(combined_text)
-                        post_data["sentiment_neg"] = sentiment["neg"]
-                        post_data["sentiment_neu"] = sentiment["neu"]
-                        post_data["sentiment_pos"] = sentiment["pos"]
-                        post_data["sentiment_compound"] = sentiment["compound"]
-                        
-                        complexity = get_text_complexity(combined_text)
-                        post_data["word_count"] = complexity["word_count"]
-                        post_data["avg_word_length"] = complexity["avg_word_length"]
-                        post_data["sentence_count"] = complexity["sentence_count"]
-                        
-                        domain = extract_domain(post.url)
-                        post_data["domain_is_credible"] = 1 if domain in credible_domains else 0
-                        post_data["domain_is_problematic"] = 1 if domain in problematic_domains else 0
-                        
-                        post.comments.replace_more(limit=0)
-                        comment_sentiments = []
-                        for comment in list(post.comments)[:3]:
-                            if comment.body and comment.author:
-                                comment_sentiment = sid.polarity_scores(comment.body)["compound"]
-                                comment_sentiments.append(comment_sentiment)
-                        
-                        post_data["avg_comment_sentiment"] = np.mean(comment_sentiments) if comment_sentiments else 0
-                        post_data["comment_sentiment_variance"] = np.var(comment_sentiments) if len(comment_sentiments) > 1 else 0
-                        
-                        all_posts_data.append(post_data)
-                        time.sleep(2)
-                    except Exception as e:
-                        print(f"Error processing post: {str(e)}")
-                        continue
-            except Exception as e:
-                print(f"Error accessing subreddit {subreddit_name}: {str(e)}")
-                continue
-        
-        if len(all_posts_data) >= 10:
-            return pd.DataFrame(all_posts_data)
-        else:
-            print(f"Only collected {len(all_posts_data)} posts, using sample data instead")
-            return use_sample_data()
-            
-    except Exception as e:
-        print(f"Reddit API error: {str(e)}")
-        return use_sample_data()
-
 # Feature engineering function
 def engineer_features(df):
     print("Performing feature engineering...")
     
+    # Fix the invalid escape sequence
     df['title_has_clickbait'] = df['title'].str.contains('|'.join([
         'you won\'t believe', 'shocking', 'mind blowing', 'amazing', 'unbelievable', 
         'shocking truth', 'secret', 'revealed', 'this is why', 'this will', 'won\'t believe'
     ]), case=False, regex=True).astype(int)
     
-    df['title_has_question'] = df['title'].str.contains('\?').astype(int)
+    # Use raw string for regex pattern
+    df['title_has_question'] = df['title'].str.contains(r'\?').astype(int)
     df['title_is_all_caps'] = df['title'].str.isupper().astype(int)
     
     df['title_selftext_ratio'] = 0.0
@@ -311,9 +321,12 @@ def prepare_model_data(df):
     title_features = tfidf.fit_transform(df['title'].fillna(''))
     X_with_text = pd.concat([X.reset_index(drop=True), pd.DataFrame(title_features.toarray())], axis=1)
     
+    # Make sure all column names are strings to avoid the error
+    X_with_text.columns = X_with_text.columns.astype(str)
+    
     return X_with_text, y, tfidf
 
-# Global prediction function
+# Updated prediction function
 def predict_credibility(post_title, post_url, post_text="", author_karma=0, author_age_days=0, rf=None, tfidf=None, X_columns=None):
     post_data = {
         "title": post_title,
@@ -363,6 +376,9 @@ def predict_credibility(post_title, post_url, post_text="", author_karma=0, auth
         
     X_new = X_new[X_columns]
     
+    # Convert column names to strings to avoid the error
+    X_new.columns = X_new.columns.astype(str)
+    
     prediction = rf.predict(X_new)[0]
     probability = rf.predict_proba(X_new)[0][1]
     
@@ -374,9 +390,9 @@ def predict_credibility(post_title, post_url, post_text="", author_karma=0, auth
 
 # Function to test the prediction function
 def test_prediction(rf, tfidf, X_columns):
-    from joblib import load
     if rf is None:
         try:
+            from joblib import load
             rf = load('reddit_fake_news_model.joblib')
             tfidf = load('reddit_tfidf_vectorizer.joblib')
         except:
@@ -422,8 +438,11 @@ def test_prediction(rf, tfidf, X_columns):
 
 # Main execution flow
 def main():
-    print("Starting Reddit fake news detection model training...")
-    df = collect_reddit_data_safely()
+    print("Starting Reddit fake news detection model training using local data...")
+    
+    # Load data from the JSON file
+    df = load_local_json_data()
+    
     if df.empty:
         print("No data collected. Exiting.")
         return None, None, None
@@ -441,9 +460,6 @@ def main():
     
     print("Training Random Forest classifier...")
     rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    X_train.columns = X_train.columns.astype(str)
-    X_test.columns = X_test.columns.astype(str)
-
     rf.fit(X_train, y_train)
     
     y_pred = rf.predict(X_test)
@@ -468,6 +484,32 @@ def main():
     
     return rf, tfidf, X.columns
 
+# Test predictions on real Reddit posts from the JSON file
+def test_mumbai_posts(rf, tfidf, X_columns):
+    try:
+        with open('mumbai_reddit_posts.json', 'r', encoding='utf-8') as f:
+            posts = json.load(f)
+        
+        print("\nPredicting credibility for actual Reddit posts from Mumbai subreddit:")
+        for post in posts:
+            result = predict_credibility(
+                post_title=post["title"],
+                post_url=post["url"],
+                post_text="",  # We don't have selftext in the JSON
+                author_karma=1000,  # Default value
+                author_age_days=365,  # Default value
+                rf=rf,
+                tfidf=tfidf,
+                X_columns=X_columns
+            )
+            print(f"\nPost: {post['title']}")
+            print(f"URL: {post['url']}")
+            print(f"Prediction: {'credible' if result['is_credible'] else 'not credible'}")
+            print(f"Confidence: {result['confidence']} ({result['credibility_score']:.2f})")
+            
+    except Exception as e:
+        print(f"Error testing Mumbai posts: {str(e)}")
+
 if __name__ == "__main__":
     rf, tfidf, X_columns = main()
     
@@ -485,5 +527,8 @@ if __name__ == "__main__":
         )
         print(f"Example prediction: {example_result}")
         
-        # Test the prediction function with test cases
+        # Test with standard test cases
         test_prediction(rf, tfidf, X_columns)
+        
+        # Test with actual Mumbai subreddit posts
+        test_mumbai_posts(rf, tfidf, X_columns)
