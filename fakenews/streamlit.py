@@ -83,9 +83,9 @@ def get_text_complexity(text):
 @st.cache_resource
 def initialize_reddit():
     return praw.Reddit(
-        client_id="F2AyVPKAxPApH3arBONu9w",
-        client_secret="06NmSk2W3V_nd2kllhnzsp1Oq3IRMA",
-        user_agent="script:fakenews:1.0 (by u/Amazing-Bite-957)"
+        client_id="",
+        client_secret="",
+        user_agent=""
     )
 
 # Fetch data from Reddit
