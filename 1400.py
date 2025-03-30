@@ -18,12 +18,15 @@ import requests
 import hashlib
 import sqlite3
 
-# Page configuration
 st.set_page_config(
     page_title="Reddit News Credibility Analyzer",
     page_icon="📰",
     layout="wide"
 )
+
+
+
+
 
 # Download necessary NLTK data
 @st.cache_resource
@@ -232,14 +235,96 @@ def initialize_reddit():
         client_secret="06NmSk2W3V_nd2kllhnzsp1Oq3IRMA",
         user_agent="script:fakenews:1.0 (by u/Amazing-Bite-957)"
     )
+def check_clickbait(title):
+    """
+    Checks if a post title has clickbait characteristics.
+    
+    Args:
+        title (str): The title to analyze
+        
+    Returns:
+        int: 1 if clickbait is detected, 0 otherwise
+    """
+    # Convert to lowercase for easier matching
+    title_lower = title.lower()
+    
+    # Clickbait patterns
+    clickbait_phrases = [
+        "you won't believe", 
+        "will shock you",
+        "mind blowing",
+        "shocking",
+        "jaw-dropping",
+        "jaw dropping",
+        "amazing",
+        "incredible",
+        "unbelievable",
+        "secret",
+        "secrets",
+        "they don't want you to know",
+        "this one trick",
+        "one simple trick",
+        "life hack",
+        "simple way",
+        "easy way",
+        "doctors hate",
+        "doctors hate him",
+        "doctors hate her",
+        "what happens next",
+        "what happened next",
+        "the reason will",
+        "the result will",
+        "number 7 will",
+        "find out why",
+        "this is why"
+    ]
+    
+    # Check for direct phrase matches
+    for phrase in clickbait_phrases:
+        if phrase in title_lower:
+            return 1
+    
+    # Check for excessive punctuation or all caps
+    if title.count('!') > 1 or title.count('?') > 2:
+        return 1
+    
+    if sum(1 for c in title if c.isupper()) / max(len(title), 1) > 0.5:  # More than 50% uppercase
+        return 1
+    
+    # Check for clickbait number patterns
+    number_patterns = [
+        r'\d+ (things|ways|tips|tricks|hacks|reasons|facts)',
+        r'top \d+',
+        r'\d+ (simple|easy|quick) (ways|steps|tips)'
+    ]
+    
+    import re
+    for pattern in number_patterns:
+        if re.search(pattern, title_lower):
+            return 1
+    
+    # Check for emotional bait with ellipsis or incomplete statements
+    if title.endswith('...') or title.endswith('…'):
+        return 1
+    
+    # Check for classic clickbait structures
+    if (title_lower.startswith('when ') or title_lower.startswith('how ')) and '...' in title:
+        return 1
+    
+    if (title_lower.startswith('this ') or title_lower.startswith('these ')) and any(word in title_lower for word in ['will', 'could', 'can', 'might']):
+        return 1
+        
+    # Not detected as clickbait
+    return 0
 
 # Fetch data from Reddit
-def fetch_reddit_data(subreddit_name, time_filter, limit=100):
+def fetch_reddit_data(subreddit_name, time_filter, limit=6000):
     reddit = initialize_reddit()
+    conn = setup_database()
+    c = conn.cursor()
     
     try:
         subreddit = reddit.subreddit(subreddit_name)
-        posts = []
         
         if time_filter == "hour":
             start_time = datetime.utcnow() - timedelta(hours=1)
@@ -256,22 +341,24 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=100):
         
         start_timestamp = start_time.timestamp()
         
-        for submission in subreddit.new(limit=limit):
-            if submission.created_utc >= start_timestamp:
-                posts.append(submission)
-        
+        # Collection for returning the data
         all_posts_data = []
-        for post in posts:
+        
+        # Process each post individually
+        for submission in subreddit.new(limit=limit):
+            if submission.created_utc < start_timestamp:
+                continue
+                
             try:
                 # Get author data 
-                if post.author:
-                    author_name = post.author.name
+                if submission.author:
+                    author_name = submission.author.name
                     try:
-                        author_created_utc = post.author.created_utc
+                        author_created_utc = submission.author.created_utc
                         author_age_days = (time.time() - author_created_utc) / (60 * 60 * 24)
-                        author_comment_karma = post.author.comment_karma
-                        author_link_karma = post.author.link_karma
-                        author_has_verified_email = post.author.has_verified_email
+                        author_comment_karma = submission.author.comment_karma
+                        author_link_karma = submission.author.link_karma
+                        author_has_verified_email = submission.author.has_verified_email
                     except:
                         # Fallback if author data can't be retrieved
                         author_created_utc = time.time() - 30 * 86400  # Default 30 days
@@ -288,37 +375,36 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=100):
                     author_has_verified_email = False
                 
                 # Extract domain and check credibility in real-time
-                domain = extract_domain(post.url)
+                domain = extract_domain(submission.url)
                 domain_credibility = check_domain_credibility(domain)
                 
+                # Full post data (for processing, not all will be inserted)
                 post_data = {
-                    "id": post.id,
-                    "title": post.title,
-                    "url": post.url,
+                    "id": submission.id,
+                    "title": submission.title,
+                    "url": submission.url,
                     "domain": domain,
-                    "is_self": post.is_self,
-                    "selftext": post.selftext,
-                    "score": post.score,
-                    "upvote_ratio": post.upvote_ratio,
-                    "num_comments": post.num_comments,
-                    "created_utc": post.created_utc,
-                    "post_age_days": (time.time() - post.created_utc) / (60 * 60 * 24),
+                    "is_self": submission.is_self,
+                    "selftext": submission.selftext,
+                    "score": submission.score,
+                    "upvote_ratio": submission.upvote_ratio,
+                    "num_comments": submission.num_comments,
+                    "created_utc": submission.created_utc,
+                    "post_age_days": (time.time() - submission.created_utc) / (60 * 60 * 24),
                     "author": author_name,
-                    "author_created_utc": author_created_utc,
                     "author_age_days": author_age_days,
                     "author_comment_karma": author_comment_karma,
                     "author_link_karma": author_link_karma,
                     "author_has_verified_email": author_has_verified_email,
-                    # Domain credibility info from real-time check
                     "domain_credibility_score": domain_credibility["credibility_score"],
                     "domain_is_credible": int(domain_credibility["is_credible"]),
                     "domain_is_problematic": int(domain_credibility["is_problematic"])
                 }
                 
                 # Analyze sentiment from title and selftext
-                combined_text = post.title
-                if post.selftext:
-                    combined_text += " " + post.selftext
+                combined_text = submission.title
+                if submission.selftext:
+                    combined_text += " " + submission.selftext
                     
                 sentiment = sid.polarity_scores(combined_text)
                 post_data["sentiment_neg"] = sentiment["neg"]
@@ -332,19 +418,17 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=100):
                 post_data["avg_word_length"] = complexity["avg_word_length"]
                 post_data["sentence_count"] = complexity["sentence_count"]
                 
+                # Check for clickbait (assuming there's a function for this)
+                # If not available, it will use the default 0 from the get() method
+                post_data["title_has_clickbait"] = check_clickbait(submission.title) if 'check_clickbait' in globals() else 0
+                
                 # Get top-level comments for sentiment analysis
-                post_data["comments"] = []
-                post.comments.replace_more(limit=0)  # Only get readily available comments
+                submission.comments.replace_more(limit=0)  # Only get readily available comments
                 comment_sentiments = []
-                for comment in list(post.comments)[:5]:  # Get top 5 comments
+                for comment in list(submission.comments)[:5]:  # Get top 5 comments
                     if comment.body:
                         comment_sentiment = sid.polarity_scores(comment.body)["compound"]
                         comment_sentiments.append(comment_sentiment)
-                        post_data["comments"].append({
-                            "author": comment.author.name if comment.author else "[deleted]",
-                            "body": comment.body,
-                            "sentiment": comment_sentiment
-                        })
                 
                 if comment_sentiments:
                     post_data["avg_comment_sentiment"] = np.mean(comment_sentiments)
@@ -353,15 +437,59 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=100):
                     post_data["avg_comment_sentiment"] = 0
                     post_data["comment_sentiment_variance"] = 0
                 
-                all_posts_data.append(post_data)
+                # Prepare the specific data for database insertion
+                data = {
+                    "post_id": post_data["id"],
+                    "title": post_data["title"],
+                    "domain": post_data["domain"],
+                    "is_self": int(post_data["is_self"]),
+                    "score": post_data["score"],
+                    "upvote_ratio": post_data["upvote_ratio"],
+                    "num_comments": post_data["num_comments"],
+                    "author_age_days": post_data["author_age_days"],
+                    "author_karma": post_data.get("author_comment_karma", 0) + post_data.get("author_link_karma", 0),
+                    "sentiment_compound": post_data["sentiment_compound"],
+                    "word_count": post_data["word_count"],
+                    "avg_word_length": post_data["avg_word_length"],
+                    "title_has_clickbait": post_data.get("title_has_clickbait", 0),
+                    "credibility_score": domain_credibility.get("credibility_score", 0.5),
+                    "is_credible": domain_credibility.get("is_credible", 0),
+                    "feedback": None  # No user feedback at this stage
+                }
+                
+                # Insert data into the database immediately
+                columns = ", ".join(data.keys())
+                placeholders = ", ".join(["?"] * len(data))
+                
+                query = f'''
+                INSERT OR REPLACE INTO training_data
+                ({columns})
+                VALUES ({placeholders})
+                '''
+                
+                try:
+                    # Execute the query with values
+                    c.execute(query, list(data.values()))
+                    conn.commit()
+                    
+                    # Also store the full post data if needed for return
+                    all_posts_data.append(post_data)
+                    
+                except sqlite3.Error as e:
+                    st.error(f"Database error for post {submission.id}: {str(e)}")
+                    continue
+                    
             except Exception as e:
-                st.error(f"Error processing post: {str(e)}")
+                st.error(f"Error processing post {submission.id}: {str(e)}")
                 continue
                 
         return pd.DataFrame(all_posts_data)
+        
     except Exception as e:
         st.error(f"Error fetching data from r/{subreddit_name}: {str(e)}")
         return pd.DataFrame()
+    finally:
+        conn.close()
 
 # Feature engineering function
 def engineer_features(df):
@@ -722,9 +850,14 @@ def store_post_data(post_data, user_feedback=None):
     VALUES ({placeholders})
     '''
     
-    c.execute(query, values)
-    conn.commit()
-    conn.close()
+    try:
+        # Execute the query with values
+        c.execute(query, list(data.values()))
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"An error occurred: {e}")
+    finally:
+        conn.close()
 
 # Sidebar for app options
 st.sidebar.title("Reddit News Credibility Analyzer")
@@ -732,9 +865,14 @@ analysis_mode = st.sidebar.selectbox(
     "Analysis Mode",
     ["Analyze Subreddit", "Analyze Single Post"]
 )
+@st.cache_resource
+def initialize_model():
+    return load_or_train_model()
+
+rf_model, tfidf_vectorizer, model_columns = initialize_model()
 
 # Initialize model
-rf_model, tfidf_vectorizer, model_columns = load_or_train_model()
+
 
 if analysis_mode == "Analyze Subreddit":
     st.title("🔍 Reddit News Credibility Analyzer")
@@ -806,14 +944,21 @@ if analysis_mode == "Analyze Subreddit":
                 
                 # Add color-coding for credibility
                 def highlight_credibility(row):
-                    if row['credibility_score'] >= '0.8':
-                        return ['background-color: #d4edda'] * len(row)
-                    elif row['credibility_score'] >= 0.6:
-                        return ['background-color: #d1ecf1'] * len(row)
-                    elif row['credibility_score'] >= 0.4:
-                        return ['background-color: #fff3cd'] * len(row)
-                    else:
-                        return ['background-color: #f8d7da'] * len(row)
+                  try:
+                      score = float(row['credibility_score'].strip('%')) / 100  # Convert '13.0%' -> 0.13
+                  except ValueError:
+                      return [''] * len(row)  # If conversion fails, return no styling
+                  
+                  if score >= 0.8:
+                      return ['background-color: #f0f0f0'] * len(row)  # Light gray
+                  elif score >= 0.6:
+                      return ['background-color: #d9d9d9'] * len(row)  # Medium gray
+                  elif score >= 0.4:
+                      return ['background-color: #bfbfbf'] * len(row)  # Darker gray
+                  else:
+                      return ['background-color: #808080; color: white'] * len(row)  # Dark gray with white text
+                # Dark gray with white text
+
                 
                 display_df = df[['title', 'domain', 'score', 'num_comments', 'credibility_score']].copy()
                 display_df['credibility_score'] = (display_df['credibility_score'] * 100).round(1).astype(str) + '%'
@@ -823,12 +968,18 @@ if analysis_mode == "Analyze Subreddit":
                 
                 # Detailed analysis option
                 st.subheader("Detailed Post Analysis")
+                if "selected_post_idx" not in st.session_state:
+                  st.session_state.selected_post_idx = 0  # Default to first post
+
                 selected_post_idx = st.selectbox(
                     "Select a post for detailed analysis",
                     range(len(df)),
+                    index=st.session_state.selected_post_idx,  # Use stored value
                     format_func=lambda i: df.iloc[i]['title'][:80] + "..."
                 )
-                
+
+                st.session_state.selected_post_idx = selected_post_idx
+
                 post = df.iloc[selected_post_idx]
                 
                 detail_col1, detail_col2 = st.columns(2)
@@ -902,8 +1053,12 @@ if analysis_mode == "Analyze Subreddit":
                 )
                 
                 if st.button("Submit Feedback"):
+                    
                     feedback_map = {"Yes": 1, "No": 0, "Unsure": None}
                     store_post_data(post.to_dict(), feedback_map[feedback])
+                    st.info("Retraining model with new feedback...")
+                    
+                    rf_model, tfidf_vectorizer, model_columns = load_or_train_model(force_retrain=True)
                     st.success("Thank you for your feedback! It will help improve our model.")
 
 elif analysis_mode == "Analyze Single Post":
@@ -1217,9 +1372,20 @@ def initialize_reddit():
     )
     return reddit
 
-def load_or_train_model():
-    """Load existing model or train a new one"""
+def load_or_train_model(force_retrain=False):
+    """Load existing model or train a new one
+    
+    Args:
+        force_retrain (bool): If True, retrain the model regardless of existing model
+        
+    Returns:
+        tuple: (model, vectorizer, model_columns)
+    """
     try:
+        # If force_retrain is True, raise FileNotFoundError to trigger retraining
+        if force_retrain:
+            raise FileNotFoundError
+            
         # Try to load existing model
         with open('credibility_model.pkl', 'rb') as f:
             model_data = pickle.load(f)
@@ -1231,15 +1397,15 @@ def load_or_train_model():
         return rf_model, tfidf_vectorizer, model_columns
         
     except FileNotFoundError:
-        # Train a new model if none exists
+        # Train a new model if none exists or retraining is forced
         conn = setup_database()
         query = "SELECT * FROM training_data WHERE feedback IS NOT NULL"
         training_data = pd.read_sql_query(query, conn)
         conn.close()
         
-        if len(training_data) < 20:
+        if len(training_data) < 5:  # Lowered threshold to ensure model trains with minimal data
             # Not enough data to train, return a basic model
-            rf_model = RandomForestClassifier(n_estimators=10)
+            rf_model = RandomForestClassifier(n_estimators=10, random_state=42)
             tfidf_vectorizer = TfidfVectorizer(max_features=100)
             
             # Define default columns for the model
@@ -1257,15 +1423,41 @@ def load_or_train_model():
             # Fit vectorizer on dummy data
             tfidf_vectorizer.fit_transform(['dummy text'])
             
+            # Debug info
+            print(f"Created basic model with {len(training_data)} training samples")
+            
             return rf_model, tfidf_vectorizer, model_columns
             
         # Train model on existing data
-        X = training_data.drop(['post_id', 'title', 'domain', 'feedback', 'is_credible'], axis=1)
+        print(f"Training model with {len(training_data)} samples")
+        
+        # Select features
+        features = [
+            'score', 'upvote_ratio', 'num_comments', 'author_age_days',
+            'author_karma', 'sentiment_compound', 'word_count', 
+            'avg_word_length', 'is_self', 'title_has_clickbait'
+        ]
+        
+        # Add domain credibility if available
+        if 'domain_is_credible' in training_data.columns:
+            features.append('domain_is_credible')
+        if 'domain_is_problematic' in training_data.columns:
+            features.append('domain_is_problematic')
+            
+        # Ensure all features exist
+        for feature in features:
+            if feature not in training_data.columns:
+                training_data[feature] = 0
+                
+        X = training_data[features]
         y = training_data['feedback']
         
-        # Create text vectorizer
+        # Create text vectorizer if we have enough samples
         tfidf_vectorizer = TfidfVectorizer(max_features=200)
-        tfidf_vectorizer.fit_transform(training_data['title'])
+        if len(training_data) >= 10:
+            tfidf_vectorizer.fit_transform(training_data['title'])
+        else:
+            tfidf_vectorizer.fit_transform(['dummy text'])
         
         # Train model
         rf_model = RandomForestClassifier(n_estimators=100, random_state=42)
@@ -1275,13 +1467,14 @@ def load_or_train_model():
         model_data = {
             'model': rf_model,
             'vectorizer': tfidf_vectorizer,
-            'columns': X.columns.tolist()
+            'columns': features
         }
         
         with open('credibility_model.pkl', 'wb') as f:
             pickle.dump(model_data, f)
         
-        return rf_model, tfidf_vectorizer, model_columns
+        print("Model trained and saved successfully")
+        return rf_model, tfidf_vectorizer, features
 
 def fetch_reddit_data(subreddit_name, time_filter, limit):
     """Fetch posts from a subreddit and analyze them"""
@@ -1378,15 +1571,21 @@ def fetch_reddit_data(subreddit_name, time_filter, limit):
         return pd.DataFrame()
 
 def predict_credibility(df, model, vectorizer, columns):
-    """Predict credibility for posts"""
+    """Predict credibility for posts with better fallbacks"""
     # Create features for prediction
     features = [
         'score', 'upvote_ratio', 'num_comments', 'author_age_days',
         'author_karma', 'sentiment_compound', 'word_count', 
-        'avg_word_length', 'domain_is_credible', 'domain_is_problematic'
+        'avg_word_length'
     ]
     
-    # Add text features
+    # Add domain features if available
+    if 'domain_is_credible' in df.columns:
+        features.append('domain_is_credible')
+    if 'domain_is_problematic' in df.columns:
+        features.append('domain_is_problematic')
+    
+    # Add text features if available
     if 'title_has_clickbait' in df.columns:
         features.append('title_has_clickbait')
     if 'title_has_question' in df.columns:
@@ -1399,30 +1598,41 @@ def predict_credibility(df, model, vectorizer, columns):
         if feature not in df.columns:
             df[feature] = 0
     
-    # Make prediction
-    X = df[features]
-    
-    # Simple credibility scoring algorithm (backup if model isn't useful yet)
+    # Make heuristic prediction (always run as fallback or blend)
     credibility_score = (
-        df['domain_is_credible'] * 0.4 +
-        (1 - df['domain_is_problematic']) * 0.3 +
+        df.get('domain_is_credible', 0) * 0.4 +
+        (1 - df.get('domain_is_problematic', 0)) * 0.3 +
         (df['author_age_days'] > 180).astype(int) * 0.1 +
         (df['upvote_ratio'] > 0.8).astype(int) * 0.1 +
         (df['sentiment_compound'] > 0).astype(int) * 0.05 +
         (1 - df.get('title_has_clickbait', 0)) * 0.05
     )
     
-    # Combine with model prediction if we have enough samples
+    # Check if we have a valid model
+    valid_model = True
     try:
-        model_pred = model.predict_proba(X)[:, 1]
-        # Blend model prediction with heuristic
-        df['credibility_score'] = 0.6 * model_pred + 0.4 * credibility_score
-    except:
-        # Fall back to heuristic
+        # Get available features for this model
+        model_features = list(set(features).intersection(set(columns)))
+        
+        if len(model_features) < 3:  # Need at least a few features
+            valid_model = False
+            print("Not enough matching features for model prediction")
+        else:
+            # Attempt model prediction
+            X = df[model_features]
+            model_pred = model.predict_proba(X)[:, 1]
+            # Blend model prediction with heuristic (more weight to model)
+            df['credibility_score'] = 0.7 * model_pred + 0.3 * credibility_score
+    except Exception as e:
+        print(f"Error using model for prediction: {e}")
+        valid_model = False
+    
+    # Fallback to heuristic if model failed
+    if not valid_model:
+        print("Using heuristic prediction only")
         df['credibility_score'] = credibility_score
     
     # Binary prediction (1 = credible, 0 = not credible)
     df['credibility_prediction'] = (df['credibility_score'] >= 0.6).astype(int)
     
     return df
-
