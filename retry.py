@@ -485,8 +485,8 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=1000):
 # Function to load training data from the database
 def load_training_data():
     conn = setup_database()
-    # Load all training data where feedback is not null (user has provided feedback)
-    query = "SELECT * FROM training_data "
+    # Load all labeled training data
+    query = "SELECT * FROM training_data WHERE feedback IS NOT NULL"
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
@@ -593,61 +593,98 @@ def generate_synthetic_training_data(min_samples=100):
 
 # Function to train the Random Forest model
 def train_model(X, y):
-    # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Scale the features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Train the model
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(X_train_scaled, y_train)
-    
-    # Make predictions
-    y_pred = model.predict(X_test_scaled)
-    
-    # Calculate accuracy
-    accuracy = accuracy_score(y_test, y_pred)
-    
-    # Generate classification report
-    report = classification_report(y_test, y_pred, output_dict=True)
-    
-    # Generate confusion matrix
-    cm = confusion_matrix(y_test, y_pred)
-    
-    return model, scaler, accuracy, report, cm, X_test, y_test, y_pred
+    try:
+        # Split the data
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        
+        # Scale the features
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Train Random Forest model
+        model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            class_weight='balanced',
+            random_state=42
+        )
+        
+        # Perform cross-validation
+        from sklearn.model_selection import cross_val_score
+        cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=5)
+        
+        # Train the final model
+        model.fit(X_train_scaled, y_train)
+        
+        # Make predictions
+        y_pred = model.predict(X_test_scaled)
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_test, y_pred)
+        report = classification_report(y_test, y_pred, output_dict=True)
+        cm = confusion_matrix(y_test, y_pred)
+        
+        # Save model and scaler
+        model_info = {
+            'model': model,
+            'scaler': scaler,
+            'features': list(X.columns),
+            'accuracy': accuracy,
+            'cv_scores': cv_scores,
+            'trained_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        joblib.dump(model_info, "fake_news_model_info.joblib")
+        
+        return model, scaler, accuracy, report, cm, X_test_scaled, y_test, y_pred, cv_scores
+        
+    except Exception as e:
+        st.error(f"Error during model training: {e}")
+        return None, None, 0, {}, None, None, None, None, []
 
 # Function to predict credibility for new posts
 def predict_credibility(model, scaler, new_data):
-    # Prepare the features from the new data
-    features = [
-        'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
-        'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
-        'title_has_clickbait', 'credibility_score'
-    ]
-    
-    X_new = new_data[features].copy()
-    
-    # Handle missing values
-    X_new.fillna(0, inplace=True)
-    
-    # Scale the features
-    X_new_scaled = scaler.transform(X_new)
-    
-    # Make predictions
-    predictions = model.predict(X_new_scaled)
-    
-    # Get prediction probabilities
-    probabilities = model.predict_proba(X_new_scaled)
-    
-    # Add prediction results to the data
-    new_data['is_fake_news'] = predictions
-    new_data['probability_fake'] = [prob[0] for prob in probabilities]
-    new_data['probability_real'] = [prob[1] for prob in probabilities]
-    
-    return new_data
+    try:
+        # Get features from training
+        features = [
+            'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
+            'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
+            'title_has_clickbait', 'credibility_score'
+        ]
+        
+        # Prepare features
+        X_new = new_data[features].copy()
+        
+        # Handle missing values
+        X_new.fillna(0, inplace=True)
+        
+        # Scale the features
+        X_new_scaled = scaler.transform(X_new)
+        
+        # Make predictions
+        predictions = model.predict(X_new_scaled)
+        probabilities = model.predict_proba(X_new_scaled)
+        
+        # Create a copy of the input DataFrame to avoid modifying it directly
+        result_data = new_data.copy()
+        
+        # Add prediction results
+        result_data['is_fake_news'] = predictions
+        result_data['probability_fake'] = [prob[0] for prob in probabilities]
+        result_data['probability_real'] = [prob[1] for prob in probabilities]
+        
+        return result_data
+        
+    except Exception as e:
+        st.error(f"Error during prediction: {e}")
+        # Return DataFrame with default prediction values if error occurs
+        new_data['is_fake_news'] = 0
+        new_data['probability_fake'] = 0.0
+        new_data['probability_real'] = 1.0
+        return new_data
 
 # Function to update feedback in the database
 def update_feedback(post_id, feedback_value):
@@ -858,7 +895,8 @@ def main():
                 )
                 
                 # Perform cross-validation
-                
+                from sklearn.model_selection import cross_val_score
+                cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=5)
                 
                 # Train the final model
                 model.fit(X_train_scaled, y_train)
@@ -1039,40 +1077,26 @@ def main():
                         st.error("Please select at least 2 features for training.")
                     else:
                         with st.spinner("Training the Random Forest model..."):
-                            # Filter rows with feedback
-                            labeled_data = training_data[training_data['feedback'].notna()]
+                            # Get training data with feedback
+                            training_data = load_training_data()
                             
-                            X = labeled_data[selected_features]
-                            y = labeled_data['feedback']
+                            if len(training_data) < 100:
+                                # Generate synthetic data if not enough real data
+                                synthetic_data = generate_synthetic_training_data(min_samples=100)
+                                training_data = pd.concat([training_data, synthetic_data], ignore_index=True)
+                            
+                            # Prepare features and target
+                            X = training_data[selected_features]
+                            y = training_data['feedback']
                             
                             # Handle missing values
                             X.fillna(0, inplace=True)
                             
-                            # Create custom model with selected hyperparameters
-                            custom_model = RandomForestClassifier(
-                                n_estimators=n_estimators,
-                                max_depth=max_depth,
-                                min_samples_split=min_samples_split,
-                                class_weight=None if class_weight == "None" else class_weight,
-                                random_state=42
-                            )
-                            
-                            # Train the model with custom parameters
+                            # Train the model
                             model, scaler, accuracy, report, cm, X_test, y_test, y_pred, cv_scores = train_model(X, y)
                             
                             if model is not None:
-                                # Save the model and metadata
-                                model_info = {
-                                    'model': model,
-                                    'scaler': scaler,
-                                    'features': selected_features,
-                                    'accuracy': accuracy,
-                                    'trained_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    'samples_count': len(labeled_data)
-                                }
-                                
-                                joblib.dump(model_info, "fake_news_model_info.joblib")
-                                
+                                st.success(f"Model trained successfully with accuracy: {accuracy:.4f}")
                                 # Display results
                                 st.success(f"Model trained successfully with test accuracy: {accuracy:.4f}")
                                 st.write(f"Cross-validation average score: {np.mean(cv_scores):.4f} (±{np.std(cv_scores):.4f})")
@@ -1265,7 +1289,7 @@ def main():
                                     st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
                                 
                                 with col2:
-                                    st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")
+                                    st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")  # Remove extra colon
                                 
                                 with col3:
                                     # Feedback buttons
