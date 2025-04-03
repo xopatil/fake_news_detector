@@ -1187,112 +1187,187 @@ def main():
             model = joblib.load("random_forest_model.joblib")
             scaler = joblib.load("scaler.joblib")
             
-            # Input for subreddit and time filter
-            subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
-            time_filter = st.selectbox("Select time filter", ["hour", "day", "week"])
-            limit = st.slider("Number of posts to analyze", min_value=5, max_value=100, value=20)
+            # Create tabs for bulk analysis and single post analysis
+            tab1, tab2 = st.tabs(["Analyze Multiple Posts", "Analyze Single Post"])
             
-            if st.button("Analyze"):
-                with st.spinner("Fetching and analyzing posts..."):
-                    # Fetch new data
-                    new_data = fetch_reddit_data(subreddit_name, time_filter, limit)
-                    
-                    if not new_data.empty:
-                        # Make predictions
-                        result_data = predict_credibility(model, scaler, new_data)
+            with tab1:
+                # Original bulk analysis code
+                subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
+                time_filter = st.selectbox("Select time filter", ["hour", "day", "week"])
+                limit = st.slider("Number of posts to analyze", min_value=5, max_value=100, value=20)
+                
+                if st.button("Analyze Subreddit"):
+                    with st.spinner("Fetching and analyzing posts..."):
+                        # Fetch new data
+                        new_data = fetch_reddit_data(subreddit_name, time_filter, limit)
                         
-                        # Display overall stats
-                        st.markdown("<h3 class='sub-header'>Analysis Results</h3>", unsafe_allow_html=True)
-                        
-                        fake_count = result_data['is_fake_news'].sum()
-                        real_count = len(result_data) - fake_count
-                        fake_percentage = (fake_count / len(result_data)) * 100
-                        
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            st.metric("Total Posts", len(result_data))
-                        
-                        with col2:
-                            st.metric("Potentially Fake", f"{fake_count} ({fake_percentage:.1f}%)")
-                        
-                        with col3:
-                            st.metric("Likely Credible", real_count)
-                        
-                        # Visualization of results
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        sns.histplot(
-                            data=result_data, 
-                            x='probability_real', 
-                            hue='is_fake_news',
-                            bins=20, 
-                            kde=True,
-                            ax=ax
-                        )
-                        ax.set_xlabel('Probability of being credible')
-                        ax.set_ylabel('Count')
-                        ax.set_title('Distribution of Credibility Scores')
-                        ax.legend(['Fake News', 'Credible'])
-                        st.pyplot(fig)
-                        
-                        # Display individual posts with predictions
-                        st.markdown("<h3 class='sub-header'>Post Analysis</h3>", unsafe_allow_html=True)
-                        
-                        # Sort by probability of being fake (ascending)
-                        sorted_data = result_data.sort_values('probability_real')
-                        
-                        for _, post in sorted_data.iterrows():
-                            # Determine card class based on credibility
-                            card_class = "poor-credibility" if post['probability_real'] < 0.3 else (
-                                "questionable-credibility" if post['probability_real'] < 0.7 else "good-credibility"
-                            )
+                        if not new_data.empty:
+                            # Make predictions
+                            result_data = predict_credibility(model, scaler, new_data)
                             
-                            # Display the post card
-                            st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
+                            # Display overall stats
+                            st.markdown("<h3 class='sub-header'>Analysis Results</h3>", unsafe_allow_html=True)
                             
-                            # Post title and credibility score
-                            st.markdown(f"**Title**: {post['title']}")
-                            st.markdown(f"**Domain**: {post['domain']} (Credibility Score: {post['domain_credibility_score']:.2f})")
+                            fake_count = result_data['is_fake_news'].sum()
+                            real_count = len(result_data) - fake_count
+                            fake_percentage = (fake_count / len(result_data)) * 100
                             
-                            # Display prediction results
                             col1, col2, col3 = st.columns(3)
                             
                             with col1:
-                                st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
+                                st.metric("Total Posts", len(result_data))
                             
                             with col2:
-                                st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")
+                                st.metric("Potentially Fake", f"{fake_count} ({fake_percentage:.1f}%)")
                             
                             with col3:
-                                # Feedback buttons
-                                post_id = post['id']
-                                col3_1, col3_2 = st.columns(2)
+                                st.metric("Likely Credible", real_count)
+                            
+                            # Visualization of results
+                            fig, ax = plt.subplots(figsize=(10, 6))
+                            sns.histplot(
+                                data=result_data, 
+                                x='probability_real', 
+                                hue='is_fake_news',
+                                bins=20, 
+                                kde=True,
+                                ax=ax
+                            )
+                            ax.set_xlabel('Probability of being credible')
+                            ax.set_ylabel('Count')
+                            ax.set_title('Distribution of Credibility Scores')
+                            ax.legend(['Fake News', 'Credible'])
+                            st.pyplot(fig)
+                            
+                            # Display individual posts with predictions
+                            st.markdown("<h3 class='sub-header'>Post Analysis</h3>", unsafe_allow_html=True)
+                            
+                            # Sort by probability of being fake (ascending)
+                            sorted_data = result_data.sort_values('probability_real')
+                            
+                            for _, post in sorted_data.iterrows():
+                                # Determine card class based on credibility
+                                card_class = "poor-credibility" if post['probability_real'] < 0.3 else (
+                                    "questionable-credibility" if post['probability_real'] < 0.7 else "good-credibility"
+                                )
                                 
-                                with col3_1:
-                                    if st.button("👎 Fake", key=f"fake_{post_id}"):
-                                        update_feedback(post_id, 0)
-                                        st.success("Feedback recorded. Thank you!")
+                                # Display the post card
+                                st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
                                 
-                                with col3_2:
-                                    if st.button("👍 Real", key=f"real_{post_id}"):
-                                        update_feedback(post_id, 1)
-                                        st.success("Feedback recorded. Thank you!")
+                                # Post title and credibility score
+                                st.markdown(f"**Title**: {post['title']}")
+                                st.markdown(f"**Domain**: {post['domain']} (Credibility Score: {post['domain_credibility_score']:.2f})")
+                                
+                                # Display prediction results
+                                col1, col2, col3 = st.columns(3)
+                                
+                                with col1:
+                                    st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
+                                
+                                with col2:
+                                    st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")
+                                
+                                with col3:
+                                    # Feedback buttons
+                                    post_id = post['id']
+                                    col3_1, col3_2 = st.columns(2)
+                                    
+                                    with col3_1:
+                                        if st.button("👎 Fake", key=f"fake_{post_id}"):
+                                            update_feedback(post_id, 0)
+                                            st.success("Feedback recorded. Thank you!")
+                                    
+                                    with col3_2:
+                                        if st.button("👍 Real", key=f"real_{post_id}"):
+                                            update_feedback(post_id, 1)
+                                            st.success("Feedback recorded. Thank you!")
+                                
+                                # Additional post details
+                                st.markdown(f"""
+                                **Score**: {post['score']} | **Comments**: {post['num_comments']} | **Upvote Ratio**: {post['upvote_ratio']:.2f}
+                                
+                                **Clickbait**: {'Yes' if post['title_has_clickbait'] == 1 else 'No'} | **Sentiment**: {post['sentiment_compound']:.2f}
+                                """)
+                                
+                                # Close the card div
+                                st.markdown("</div>", unsafe_allow_html=True)
+                                
+                                # Add a small space between posts
+                                st.markdown("<br>", unsafe_allow_html=True)
+                        else:
+                            st.error(f"Failed to fetch data from r/{subreddit_name}. Please try a different subreddit or time filter.")
+            
+            with tab2:
+                # Single post analysis
+                post_url = st.text_input("Enter Reddit post URL", 
+                    placeholder="https://www.reddit.com/r/news/comments/...")
+                
+                if st.button("Analyze Post"):
+                    if post_url:
+                        with st.spinner("Analyzing post..."):
+                            # Extract post ID from URL
+                            post_id = extract_post_id_from_url(post_url)
                             
-                            # Additional post details
-                            st.markdown(f"""
-                            **Score**: {post['score']} | **Comments**: {post['num_comments']} | **Upvote Ratio**: {post['upvote_ratio']:.2f}
-                            
-                            **Clickbait**: {'Yes' if post['title_has_clickbait'] == 1 else 'No'} | **Sentiment**: {post['sentiment_compound']:.2f}
-                            """)
-                            
-                            # Close the card div
-                            st.markdown("</div>", unsafe_allow_html=True)
-                            
-                            # Add a small space between posts
-                            st.markdown("<br>", unsafe_allow_html=True)
+                            if post_id:
+                                # Initialize Reddit API
+                                reddit = initialize_reddit()
+                                
+                                # Fetch and analyze the post
+                                post_data = analyze_single_post(reddit, post_id)
+                                
+                                if post_data is not None:
+                                    # Make prediction
+                                    result_data = predict_credibility(model, scaler, post_data)
+                                    
+                                    # Display result in a card
+                                    post = result_data.iloc[0]
+                                    
+                                    # Determine card class based on credibility
+                                    card_class = "poor-credibility" if post['probability_real'] < 0.3 else (
+                                        "questionable-credibility" if post['probability_real'] < 0.7 else "good-credibility"
+                                    )
+                                    
+                                    st.markdown(f"<div class='card {card_class}'>", unsafe_allow_html=True)
+                                    
+                                    # Post details
+                                    st.markdown(f"**Title**: {post['title']}")
+                                    st.markdown(f"**Domain**: {post['domain']} (Credibility Score: {post['domain_credibility_score']:.2f})")
+                                    
+                                    # Prediction results
+                                    col1, col2 = st.columns(2)
+                                    
+                                    with col1:
+                                        st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
+                                        st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")
+                                    
+                                    with col2:
+                                        # Feedback buttons
+                                        st.markdown("**Provide Feedback:**")
+                                        col2_1, col2_2 = st.columns(2)
+                                        
+                                        with col2_1:
+                                            if st.button("👎 Fake", key=f"fake_single_{post['id']}"):
+                                                update_feedback(post['id'], 0)
+                                                st.success("Feedback recorded. Thank you!")
+                                        
+                                        with col2_2:
+                                            if st.button("👍 Real", key=f"real_single_{post['id']}"):
+                                                update_feedback(post['id'], 1)
+                                                st.success("Feedback recorded. Thank you!")
+                                    
+                                    # Additional metrics
+                                    st.markdown(f"""
+                                    **Score**: {post['score']} | **Comments**: {post['num_comments']} | **Upvote Ratio**: {post['upvote_ratio']:.2f}
+                                    
+                                    **Clickbait**: {'Yes' if post['title_has_clickbait'] == 1 else 'No'} | **Sentiment**: {post['sentiment_compound']:.2f}
+                                    """)
+                                    
+                                    st.markdown("</div>", unsafe_allow_html=True)
+                            else:
+                                st.error("Invalid Reddit post URL. Please make sure the URL is correct.")
                     else:
-                        st.error(f"Failed to fetch data from r/{subreddit_name}. Please try a different subreddit or time filter.")
-    
+                        st.warning("Please enter a Reddit post URL.")
+
     # Model Performance page
     elif app_mode == "Model Performance":
         st.markdown("<h2 class='sub-header'>Model Performance Analysis</h2>", unsafe_allow_html=True)
@@ -1450,6 +1525,67 @@ def main():
                         st.success(f"Generated {len(synthetic_data)} synthetic data points.")
                         st.experimental_rerun()  # Rerun to update the interface
 
+def extract_post_id_from_url(url):
+    """Extract post ID from Reddit URL"""
+    try:
+        # Handle different Reddit URL formats
+        if '/comments/' in url:
+            return url.split('/comments/')[1].split('/')[0]
+        return None
+    except:
+        return None
+
+def analyze_single_post(reddit, post_id):
+    """Fetch and analyze a single Reddit post"""
+    try:
+        # Fetch the post
+        submission = reddit.submission(id=post_id)
+        
+        # Extract post data (similar to bulk analysis)
+        if submission.author:
+            author_age_days = (time.time() - submission.author.created_utc) / (60 * 60 * 24)
+            author_karma = submission.author.comment_karma + submission.author.link_karma
+        else:
+            author_age_days = 30
+            author_karma = 0
+            
+        domain = extract_domain(submission.url)
+        domain_credibility = check_domain_credibility(domain)
+        
+        # Create post data dictionary
+        post_data = {
+            'id': [submission.id],
+            'title': [submission.title],
+            'domain': [domain],
+            'is_self': [submission.is_self],
+            'score': [submission.score],
+            'upvote_ratio': [submission.upvote_ratio],
+            'num_comments': [submission.num_comments],
+            'author_age_days': [author_age_days],
+            'author_karma': [author_karma],
+            'credibility_score': [domain_credibility["credibility_score"]],
+            'domain_credibility_score': [domain_credibility["credibility_score"]]
+        }
+        
+        # Get sentiment
+        combined_text = submission.title
+        if submission.selftext:
+            combined_text += " " + submission.selftext
+        sentiment = sid.polarity_scores(combined_text)
+        post_data['sentiment_compound'] = [sentiment["compound"]]
+        
+        # Get text complexity
+        complexity = get_text_complexity(combined_text)
+        post_data['word_count'] = [complexity["word_count"]]
+        post_data['avg_word_length'] = [complexity["avg_word_length"]]
+        
+        # Check for clickbait
+        post_data['title_has_clickbait'] = [check_clickbait(submission.title)]
+        
+        return pd.DataFrame(post_data)
+    except Exception as e:
+        st.error(f"Error fetching post: {str(e)}")
+        return None
+
 if __name__ == "__main__":
     main()
-                          
