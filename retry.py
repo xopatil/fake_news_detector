@@ -301,20 +301,23 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=1000):
     try:
         subreddit = reddit.subreddit(subreddit_name)
         
+        # Calculate start and end timestamps based on time_filter
+        end_time = datetime.utcnow()
         if time_filter == "hour":
-            start_time = datetime.utcnow() - timedelta(hours=1)
+            start_time = end_time - timedelta(hours=1)
         elif time_filter == "day":
-            start_time = datetime.utcnow() - timedelta(days=1)
+            start_time = end_time - timedelta(days=1)
         elif time_filter == "week":
-            start_time = datetime.utcnow() - timedelta(weeks=1)
+            start_time = end_time - timedelta(weeks=1)
         elif time_filter == "month":
-            start_time = datetime.utcnow() - timedelta(days=30)
+            start_time = end_time - timedelta(days=30)
         elif time_filter == "year":
-            start_time = datetime.utcnow() - timedelta(days=365)
+            start_time = end_time - timedelta(days=365)
         else:  # All time
             start_time = datetime.utcfromtimestamp(0)
         
-        start_timestamp = start_time.timestamp()
+        start_timestamp = int(start_time.timestamp())
+        end_timestamp = int(end_time.timestamp())
         
         # Collection for returning the data
         all_posts_data = []
@@ -322,153 +325,171 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=1000):
         # Show progress
         progress_bar = st.progress(0)
         status_text = st.empty()
+        posts_processed = 0
         
-        # Process each post individually
-        for i, submission in enumerate(subreddit.new(limit=limit)):
-            # Update progress
-            progress = min(i / limit, 1.0)
-            progress_bar.progress(progress)
-            status_text.text(f"Processing post {i+1}/{limit}: {submission.title[:50]}...")
-            
-            if submission.created_utc < start_timestamp:
-                continue
+        # Use pushshift.io API to get post IDs for the date range
+        pushshift_url = f"https://api.pushshift.io/reddit/search/submission/?subreddit={subreddit_name}&after={start_timestamp}&before={end_timestamp}&size={limit}"
+        
+        try:
+            import requests
+            response = requests.get(pushshift_url)
+            if response.status_code == 200:
+                post_ids = [post['id'] for post in response.json()['data']]
+                total_posts = len(post_ids)
                 
-            try:
-                # Get author data 
-                if submission.author:
-                    author_name = submission.author.name
+                # Fetch full post data using PRAW
+                for i, post_id in enumerate(post_ids):
                     try:
-                        author_created_utc = submission.author.created_utc
-                        author_age_days = (time.time() - author_created_utc) / (60 * 60 * 24)
-                        author_comment_karma = submission.author.comment_karma
-                        author_link_karma = submission.author.link_karma
-                        author_has_verified_email = submission.author.has_verified_email
-                    except:
-                        # Fallback if author data can't be retrieved
-                        author_created_utc = time.time() - 30 * 86400  # Default 30 days
-                        author_age_days = 30
-                        author_comment_karma = 100
-                        author_link_karma = 50
-                        author_has_verified_email = False
-                else:
-                    author_name = "[deleted]"
-                    author_created_utc = time.time() - 30 * 86400
-                    author_age_days = 30
-                    author_comment_karma = 100
-                    author_link_karma = 50
-                    author_has_verified_email = False
-                
-                # Extract domain and check credibility in real-time
-                domain = extract_domain(submission.url)
-                domain_credibility = check_domain_credibility(domain)
-                
-               # Full post data (for processing, not all will be inserted)
-                post_data = {
-                    "id": submission.id,
-                    "title": submission.title,
-                    "url": submission.url,
-                    "domain": domain,
-                    "is_self": submission.is_self,
-                    "selftext": submission.selftext,
-                    "score": submission.score,
-                    "upvote_ratio": submission.upvote_ratio,
-                    "num_comments": submission.num_comments,
-                    "created_utc": submission.created_utc,
-                    "post_age_days": (time.time() - submission.created_utc) / (60 * 60 * 24),
-                    "author": author_name,
-                    "author_age_days": author_age_days,
-                    "author_comment_karma": author_comment_karma,
-                    "author_link_karma": author_link_karma,
-                    "author_has_verified_email": author_has_verified_email,
-                    "credibility_score": domain_credibility.get("credibility_score", 0.5),
-                    "domain_credibility_score": domain_credibility["credibility_score"],
-                    "domain_is_credible": int(domain_credibility["is_credible"]),
-                    "domain_is_problematic": int(domain_credibility["is_problematic"])
-                }
+                        submission = reddit.submission(id=post_id)
+                        posts_processed += 1
+                        
+                        # Update progress
+                        progress = min(posts_processed / total_posts, 1.0)
+                        progress_bar.progress(progress)
+                        status_text.text(f"Processing post {posts_processed}/{total_posts}: {submission.title[:50]}...")
+                        
+                        # Get author data 
+                        if submission.author:
+                            author_name = submission.author.name
+                            try:
+                                author_created_utc = submission.author.created_utc
+                                author_age_days = (time.time() - author_created_utc) / (60 * 60 * 24)
+                                author_comment_karma = submission.author.comment_karma
+                                author_link_karma = submission.author.link_karma
+                                author_has_verified_email = submission.author.has_verified_email
+                            except:
+                                # Fallback if author data can't be retrieved
+                                author_created_utc = time.time() - 30 * 86400  # Default 30 days
+                                author_age_days = 30
+                                author_comment_karma = 100
+                                author_link_karma = 50
+                                author_has_verified_email = False
+                        else:
+                            author_name = "[deleted]"
+                            author_created_utc = time.time() - 30 * 86400
+                            author_age_days = 30
+                            author_comment_karma = 100
+                            author_link_karma = 50
+                            author_has_verified_email = False
+                        
+                        # Extract domain and check credibility in real-time
+                        domain = extract_domain(submission.url)
+                        domain_credibility = check_domain_credibility(domain)
+                        
+                       # Full post data (for processing, not all will be inserted)
+                        post_data = {
+                            "id": submission.id,
+                            "title": submission.title,
+                            "url": submission.url,
+                            "domain": domain,
+                            "is_self": submission.is_self,
+                            "selftext": submission.selftext,
+                            "score": submission.score,
+                            "upvote_ratio": submission.upvote_ratio,
+                            "num_comments": submission.num_comments,
+                            "created_utc": submission.created_utc,
+                            "post_age_days": (time.time() - submission.created_utc) / (60 * 60 * 24),
+                            "author": author_name,
+                            "author_age_days": author_age_days,
+                            "author_comment_karma": author_comment_karma,
+                            "author_link_karma": author_link_karma,
+                            "author_has_verified_email": author_has_verified_email,
+                            "credibility_score": domain_credibility.get("credibility_score", 0.5),
+                            "domain_credibility_score": domain_credibility["credibility_score"],
+                            "domain_is_credible": int(domain_credibility["is_credible"]),
+                            "domain_is_problematic": int(domain_credibility["is_problematic"])
+                        }
 
-                # Add author_karma after the dictionary is created
-                post_data["author_karma"] = author_comment_karma + author_link_karma
+                        # Add author_karma after the dictionary is created
+                        post_data["author_karma"] = author_comment_karma + author_link_karma
+                        
+                        # Analyze sentiment from title and selftext
+                        combined_text = submission.title
+                        if submission.selftext:
+                            combined_text += " " + submission.selftext
+                            
+                        sentiment = sid.polarity_scores(combined_text)
+                        post_data["sentiment_neg"] = sentiment["neg"]
+                        post_data["sentiment_neu"] = sentiment["neu"]
+                        post_data["sentiment_pos"] = sentiment["pos"]
+                        post_data["sentiment_compound"] = sentiment["compound"]
+                        
+                        # Text complexity
+                        complexity = get_text_complexity(combined_text)
+                        post_data["word_count"] = complexity["word_count"]
+                        post_data["avg_word_length"] = complexity["avg_word_length"]
+                        post_data["sentence_count"] = complexity["sentence_count"]
+                        
+                        # Check for clickbait
+                        post_data["title_has_clickbait"] = check_clickbait(submission.title)
+                        
+                        # Get top-level comments for sentiment analysis
+                        submission.comments.replace_more(limit=0)  # Only get readily available comments
+                        comment_sentiments = []
+                        for comment in list(submission.comments)[:5]:  # Get top 5 comments
+                            if comment.body:
+                                comment_sentiment = sid.polarity_scores(comment.body)["compound"]
+                                comment_sentiments.append(comment_sentiment)
+                        
+                        if comment_sentiments:
+                            post_data["avg_comment_sentiment"] = np.mean(comment_sentiments)
+                            post_data["comment_sentiment_variance"] = np.var(comment_sentiments)
+                        else:
+                            post_data["avg_comment_sentiment"] = 0
+                            post_data["comment_sentiment_variance"] = 0
+                        
+                        # Prepare the specific data for database insertion
+                        data = {
+                            "post_id": post_data["id"],
+                            "title": post_data["title"],
+                            "domain": post_data["domain"],
+                            "is_self": int(post_data["is_self"]),
+                            "score": post_data["score"],
+                            "upvote_ratio": post_data["upvote_ratio"],
+                            "num_comments": post_data["num_comments"],
+                            "author_age_days": post_data["author_age_days"],
+                            "author_karma": post_data.get("author_comment_karma", 0) + post_data.get("author_link_karma", 0),
+                            "sentiment_compound": post_data["sentiment_compound"],
+                            "word_count": post_data["word_count"],
+                            "avg_word_length": post_data["avg_word_length"],
+                            "title_has_clickbait": post_data.get("title_has_clickbait", 0),
+                            "credibility_score": domain_credibility.get("credibility_score", 0.5),
+                            "is_credible": domain_credibility.get("is_credible", 0),
+                            "feedback": None  # No user feedback at this stage
+                        }
+                        
+                        # Insert data into the database immediately
+                        columns = ", ".join(data.keys())
+                        placeholders = ", ".join(["?"] * len(data))
+                        
+                        query = f'''
+                        INSERT OR REPLACE INTO training_data
+                        ({columns})
+                        VALUES ({placeholders})
+                        '''
+                        
+                        try:
+                            # Execute the query with values
+                            c.execute(query, list(data.values()))
+                            conn.commit()
+                            
+                            # Also store the full post data if needed for return
+                            all_posts_data.append(post_data)
+                            
+                        except sqlite3.Error as e:
+                            st.error(f"Database error for post {submission.id}: {str(e)}")
+                            continue
+                            
+                    except Exception as e:
+                        st.warning(f"Skipped post {post_id}: {str(e)}")
+                        continue
+            else:
+                st.error("Failed to fetch data from Pushshift API")
+                return pd.DataFrame()
                 
-                # Analyze sentiment from title and selftext
-                combined_text = submission.title
-                if submission.selftext:
-                    combined_text += " " + submission.selftext
-                    
-                sentiment = sid.polarity_scores(combined_text)
-                post_data["sentiment_neg"] = sentiment["neg"]
-                post_data["sentiment_neu"] = sentiment["neu"]
-                post_data["sentiment_pos"] = sentiment["pos"]
-                post_data["sentiment_compound"] = sentiment["compound"]
-                
-                # Text complexity
-                complexity = get_text_complexity(combined_text)
-                post_data["word_count"] = complexity["word_count"]
-                post_data["avg_word_length"] = complexity["avg_word_length"]
-                post_data["sentence_count"] = complexity["sentence_count"]
-                
-                # Check for clickbait
-                post_data["title_has_clickbait"] = check_clickbait(submission.title)
-                
-                # Get top-level comments for sentiment analysis
-                submission.comments.replace_more(limit=0)  # Only get readily available comments
-                comment_sentiments = []
-                for comment in list(submission.comments)[:5]:  # Get top 5 comments
-                    if comment.body:
-                        comment_sentiment = sid.polarity_scores(comment.body)["compound"]
-                        comment_sentiments.append(comment_sentiment)
-                
-                if comment_sentiments:
-                    post_data["avg_comment_sentiment"] = np.mean(comment_sentiments)
-                    post_data["comment_sentiment_variance"] = np.var(comment_sentiments)
-                else:
-                    post_data["avg_comment_sentiment"] = 0
-                    post_data["comment_sentiment_variance"] = 0
-                
-                # Prepare the specific data for database insertion
-                data = {
-                    "post_id": post_data["id"],
-                    "title": post_data["title"],
-                    "domain": post_data["domain"],
-                    "is_self": int(post_data["is_self"]),
-                    "score": post_data["score"],
-                    "upvote_ratio": post_data["upvote_ratio"],
-                    "num_comments": post_data["num_comments"],
-                    "author_age_days": post_data["author_age_days"],
-                    "author_karma": post_data.get("author_comment_karma", 0) + post_data.get("author_link_karma", 0),
-                    "sentiment_compound": post_data["sentiment_compound"],
-                    "word_count": post_data["word_count"],
-                    "avg_word_length": post_data["avg_word_length"],
-                    "title_has_clickbait": post_data.get("title_has_clickbait", 0),
-                    "credibility_score": domain_credibility.get("credibility_score", 0.5),
-                    "is_credible": domain_credibility.get("is_credible", 0),
-                    "feedback": None  # No user feedback at this stage
-                }
-                
-                # Insert data into the database immediately
-                columns = ", ".join(data.keys())
-                placeholders = ", ".join(["?"] * len(data))
-                
-                query = f'''
-                INSERT OR REPLACE INTO training_data
-                ({columns})
-                VALUES ({placeholders})
-                '''
-                
-                try:
-                    # Execute the query with values
-                    c.execute(query, list(data.values()))
-                    conn.commit()
-                    
-                    # Also store the full post data if needed for return
-                    all_posts_data.append(post_data)
-                    
-                except sqlite3.Error as e:
-                    st.error(f"Database error for post {submission.id}: {str(e)}")
-                    continue
-                    
-            except Exception as e:
-                st.error(f"Error processing post {submission.id}: {str(e)}")
-                continue
+        except Exception as e:
+            st.error(f"Error accessing Pushshift API: {str(e)}")
+            return pd.DataFrame()
         
         # Clear the progress indicators
         progress_bar.empty()
@@ -861,314 +882,117 @@ def main():
     # Train Model page
     elif app_mode == "Train Model":
         st.markdown("<h2 class='sub-header'>Train Fake News Detection Model</h2>", unsafe_allow_html=True)
-
-        def fetch_training_data_from_db():
-            try:
-                conn = sqlite3.connect('credibility_data.db')
-                query = "SELECT * FROM training_data"  # Adjust table name if needed
-                training_data = pd.read_sql_query(query, conn)
-                conn.close()
-                return training_data
-            except Exception as e:
-                st.error(f"Error fetching data from database: {e}")
-                return pd.DataFrame()
-    
-    # Function to train the model
-        def train_model(X, y):
-            try:
-                # Split the data
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-                
-                # Scale the features
-                scaler = StandardScaler()
-                X_train_scaled = scaler.fit_transform(X_train)
-                X_test_scaled = scaler.transform(X_test)
-                
-                # Train Random Forest model
-                model = RandomForestClassifier(
-                    n_estimators=100, 
-                    max_depth=10,
-                    min_samples_split=5,
-                    min_samples_leaf=2,
-                    class_weight='balanced',
-                    random_state=42
-                )
-                
-                # Perform cross-validation
-                from sklearn.model_selection import cross_val_score
-                cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=5)
-                
-                # Train the final model
-                model.fit(X_train_scaled, y_train)
-                
-                # Make predictions
-                y_pred = model.predict(X_test_scaled)
-                
-                # Calculate metrics
-                accuracy = accuracy_score(y_test, y_pred)
-                report = classification_report(y_test, y_pred, output_dict=True)
-                cm = confusion_matrix(y_test, y_pred)
-                
-                return model, scaler, accuracy, report, cm, X_test_scaled, y_test, y_pred, cv_scores
-            except Exception as e:
-                st.error(f"Error during model training: {e}")
-                return None, None, 0, {}, None, None, None, None, []
         
-        # Function to get feature importance
-        def get_feature_importances(model, features):
-            importances = model.feature_importances_
-            indices = np.argsort(importances)[::-1]
-            
-            feature_importance_df = pd.DataFrame({
-                'feature': [features[i] for i in indices],
-                'importance': importances[indices]
-            })
-            
-            return feature_importance_df
+        # Check for existing training data
+        conn = setup_database()
+        query = """
+        SELECT is_self, score, upvote_ratio, num_comments, author_age_days,
+               author_karma, sentiment_compound, word_count, avg_word_length,
+               title_has_clickbait, credibility_score, is_credible
+        FROM training_data
+        WHERE is_credible IS NOT NULL
+        """
+        training_data = pd.read_sql_query(query, conn)
+        conn.close()
         
-        # Function to generate synthetic training data if needed
-        def generate_synthetic_training_data(min_samples=200):
-            # Create synthetic features
-            np.random.seed(42)
-            n_samples = max(min_samples, 200)
-            
-            # Generate balanced fake and real news samples
-            fake_samples = n_samples // 2
-            real_samples = n_samples - fake_samples
-            
-            # Features for fake news tend to have certain characteristics
-            fake_data = {
-                'is_self': np.random.choice([0, 1], size=fake_samples, p=[0.7, 0.3]),
-                'score': np.random.randint(1, 50, size=fake_samples),
-                'upvote_ratio': np.random.uniform(0.4, 0.7, size=fake_samples),
-                'num_comments': np.random.randint(0, 30, size=fake_samples),
-                'author_age_days': np.random.randint(1, 100, size=fake_samples),
-                'author_karma': np.random.randint(1, 1000, size=fake_samples),
-                'sentiment_compound': np.random.uniform(-1, 0.2, size=fake_samples),
-                'word_count': np.random.randint(50, 500, size=fake_samples),
-                'avg_word_length': np.random.uniform(4, 6, size=fake_samples),
-                'title_has_clickbait': np.random.choice([0, 1], size=fake_samples, p=[0.3, 0.7]),
-                'credibility_score': np.random.uniform(0.1, 0.4, size=fake_samples),
-                'feedback': np.zeros(fake_samples)
-            }
-            
-            # Features for real news
-            real_data = {
-                'is_self': np.random.choice([0, 1], size=real_samples, p=[0.3, 0.7]),
-                'score': np.random.randint(20, 200, size=real_samples),
-                'upvote_ratio': np.random.uniform(0.7, 1.0, size=real_samples),
-                'num_comments': np.random.randint(10, 100, size=real_samples),
-                'author_age_days': np.random.randint(100, 2000, size=real_samples),
-                'author_karma': np.random.randint(1000, 50000, size=real_samples),
-                'sentiment_compound': np.random.uniform(-0.2, 1, size=real_samples),
-                'word_count': np.random.randint(200, 1000, size=real_samples),
-                'avg_word_length': np.random.uniform(5, 7, size=real_samples),
-                'title_has_clickbait': np.random.choice([0, 1], size=real_samples, p=[0.7, 0.3]),
-                'credibility_score': np.random.uniform(0.6, 0.9, size=real_samples),
-                'feedback': np.ones(real_samples)
-            }
-            
-            # Combine fake and real data
-            synthetic_df_fake = pd.DataFrame(fake_data)
-            synthetic_df_real = pd.DataFrame(real_data)
-            synthetic_df = pd.concat([synthetic_df_fake, synthetic_df_real], ignore_index=True)
-            
-            # Shuffle the data
-            synthetic_df = synthetic_df.sample(frac=1).reset_index(drop=True)
-            
-            # Save to database
-            try:
-                conn = sqlite3.connect('credibility_data.db')
-                synthetic_df.to_sql('training_data', conn, if_exists='append', index=False)
-                conn.close()
-            except Exception as e:
-                st.error(f"Error saving synthetic data to database: {e}")
-            
-            return synthetic_df
+        if len(training_data) < 100:  # Not enough data
+            st.warning("Not enough training data. Fetching live data from r/news...")
+            with st.spinner("Fetching data from Reddit..."):
+                # Fetch live data from r/news
+                new_data = fetch_reddit_data("news", "day", limit=200)
+                if not new_data.empty:
+                    st.success(f"Successfully fetched {len(new_data)} posts from r/news")
+                    training_data = new_data[['is_self', 'score', 'upvote_ratio', 'num_comments', 
+                                            'author_age_days', 'author_karma', 'sentiment_compound',
+                                            'word_count', 'avg_word_length', 'title_has_clickbait',
+                                            'credibility_score', 'domain_is_credible']]
+                    training_data = training_data.rename(columns={'domain_is_credible': 'is_credible'})
+                else:
+                    st.error("Failed to fetch data. Please try again.")
+                    return
         
-        # Get training data
-        with st.spinner("Fetching training data from database..."):
-            training_data = fetch_training_data_from_db()
+        # Display dataset info
+        st.write(f"Training dataset size: {len(training_data)} posts")
         
-        # Display training data info
-        st.write(f"Training data size: {len(training_data)} posts")
+        # Features for training
+        features = [
+            'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
+            'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
+            'title_has_clickbait', 'credibility_score'
+        ]
         
-        # Add data exploration section with toggles
-        with st.expander("Data Exploration", expanded=False):
-            if not training_data.empty:
-                # Display sample of the data
-                st.subheader("Sample Data")
-                st.dataframe(training_data.head())
-                
-                # Display basic statistics
-                st.subheader("Data Statistics")
-                st.dataframe(training_data.describe())
-                
-                # Display correlation matrix
-                st.subheader("Feature Correlation")
-                numeric_cols = training_data.select_dtypes(include=['float64', 'int64']).columns
-                corr = training_data[numeric_cols].corr()
-                fig, ax = plt.subplots(figsize=(10, 8))
-                sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f", ax=ax)
-                st.pyplot(fig)
-        
-        if not training_data.empty:
-            # Check if we have labeled data
-            if 'feedback' in training_data.columns and training_data['feedback'].notna().sum() > 0:
-                st.write(f"Posts with feedback: {training_data['feedback'].notna().sum()}")
-                
-                # Show distribution of labels
-                feedback_counts = training_data['feedback'].value_counts()
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.write("Label Distribution:")
-                    label_data = pd.DataFrame({
-                        'Label': ['Fake News', 'Credible'],
-                        'Count': [
-                            feedback_counts.get(0, 0),
-                            feedback_counts.get(1, 0)
-                        ]
-                    })
-                    st.dataframe(label_data)
-                
-                with col2:
-                    fig, ax = plt.subplots(figsize=(6, 6))
-                    ax.pie(
-                        label_data['Count'],
-                        labels=label_data['Label'],
-                        autopct='%1.1f%%',
-                        startangle=90,
-                        colors=['#ff9999','#66b3ff']
+        # Train button
+        if st.button("Train Model"):
+            with st.spinner("Training model..."):
+                try:
+                    # Prepare features and target
+                    X = training_data[features].copy()
+                    y = training_data['is_credible'].astype(int)
+                    
+                    # Handle missing values
+                    X = X.fillna(0)
+                    
+                    # Verify data
+                    if X.isnull().any().any():
+                        st.error("Data contains null values after cleaning. Please check the data.")
+                        return
+                    
+                    if len(X) != len(y):
+                        st.error("Feature and target dimensions don't match.")
+                        return
+                    
+                    # Train model
+                    st.info("Training Random Forest model...")
+                    
+                    # Initialize model with basic parameters
+                    model = RandomForestClassifier(
+                        n_estimators=100,
+                        max_depth=10,
+                        class_weight='balanced',
+                        random_state=42
                     )
-                    ax.axis('equal')
-                    st.pyplot(fig)
-                
-                # Feature selection section
-                st.subheader("Feature Selection")
-                all_features = [
-                    'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
-                    'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
-                    'title_has_clickbait', 'credibility_score'
-                ]
-                
-                # Allow users to select features
-                selected_features = st.multiselect(
-                    "Select features to use for training:",
-                    options=all_features,
-                    default=all_features
-                )
-                
-                # Hyperparameter tuning options
-                st.subheader("Model Parameters")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    n_estimators = st.slider("Number of trees", 50, 300, 100, 10)
-                    max_depth = st.slider("Maximum tree depth", 3, 20, 10, 1)
-                
-                with col2:
-                    min_samples_split = st.slider("Minimum samples to split", 2, 10, 5, 1)
-                    class_weight = st.selectbox("Class weight", ["balanced", "None"])
-                
-                # Train the model
-                if st.button("Train Model"):
-                    if len(selected_features) < 2:
-                        st.error("Please select at least 2 features for training.")
-                    else:
-                        with st.spinner("Training the Random Forest model..."):
-                            # Get training data with feedback
-                            training_data = load_training_data()
-                            
-                            if len(training_data) < 100:
-                                # Generate synthetic data if not enough real data
-                                synthetic_data = generate_synthetic_training_data(min_samples=100)
-                                training_data = pd.concat([training_data, synthetic_data], ignore_index=True)
-                            
-                            # Prepare features and target
-                            X = training_data[selected_features]
-                            y = training_data['feedback']
-                            
-                            # Handle missing values
-                            X.fillna(0, inplace=True)
-                            
-                            # Train the model
-                            model, scaler, accuracy, report, cm, X_test, y_test, y_pred, cv_scores = train_model(X, y)
-                            
-                            if model is not None:
-                                st.success(f"Model trained successfully with accuracy: {accuracy:.4f}")
-                                # Display results
-                                st.success(f"Model trained successfully with test accuracy: {accuracy:.4f}")
-                                st.write(f"Cross-validation average score: {np.mean(cv_scores):.4f} (±{np.std(cv_scores):.4f})")
-                                
-                                # Display evaluation metrics
-                                eval_tab1, eval_tab2, eval_tab3 = st.tabs(["Confusion Matrix", "Classification Report", "Feature Importance"])
-                                
-                                with eval_tab1:
-                                    # Display confusion matrix
-                                    fig, ax = plt.subplots(figsize=(6, 6))
-                                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-                                    ax.set_xlabel('Predicted')
-                                    ax.set_ylabel('Actual')
-                                    ax.set_title('Confusion Matrix')
-                                    ax.set_xticklabels(['Fake News', 'Credible'])
-                                    ax.set_yticklabels(['Fake News', 'Credible'])
-                                    st.pyplot(fig)
-                                
-                                with eval_tab2:
-                                    # Display classification report
-                                    report_df = pd.DataFrame(report).transpose()
-                                    st.dataframe(report_df)
-                                    
-                                    # Display additional metrics
-                                    precision = report['weighted avg']['precision']
-                                    recall = report['weighted avg']['recall']
-                                    f1 = report['weighted avg']['f1-score']
-                                    
-                                    st.write(f"Precision: {precision:.4f}")
-                                    st.write(f"Recall: {recall:.4f}")
-                                    st.write(f"F1 Score: {f1:.4f}")
-                                
-                                with eval_tab3:
-                                    # Feature importance
-                                    feature_importance = get_feature_importances(model, selected_features)
-                                    
-                                    # Plot feature importances
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    sns.barplot(x='importance', y='feature', data=feature_importance, ax=ax)
-                                    ax.set_xlabel('Importance')
-                                    ax.set_ylabel('Feature')
-                                    ax.set_title('Feature Importance')
-                                    st.pyplot(fig)
-                                
-                                # Option to test on new data
-                                st.subheader("Test Model on New Data")
-                                st.info("You can now use this model to predict fake news in the 'Analyze Live Posts' tab.")
-            else:
-                st.warning("No labeled data available. Please provide feedback on posts in the 'Analyze Live Posts' tab or generate synthetic data for training.")
-                
-                # Option to generate synthetic data
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    synthetic_samples = st.number_input("Number of synthetic samples to generate", min_value=100, max_value=5000, value=500, step=100)
-                
-                with col2:
-                    if st.button("Generate Synthetic Training Data"):
-                        with st.spinner("Generating synthetic data..."):
-                            synthetic_data = generate_synthetic_training_data(min_samples=synthetic_samples)
-                            st.success(f"Generated {len(synthetic_data)} synthetic data points for training.")
-                            st.experimental_rerun()  # Rerun the app to show the new data
-        else:
-            st.error("No training data available. Please fetch some data first using the 'Analyze Live Posts' tab or generate synthetic data.")
-        
-        if st.button("Generate Initial Synthetic Data"):
-            with st.spinner("Generating initial synthetic dataset..."):
-                synthetic_data = generate_synthetic_training_data(min_samples=500)
-                st.success(f"Generated {len(synthetic_data)} synthetic data points.")
-                st.experimental_rerun()
+                    
+                    # Scale features
+                    scaler = StandardScaler()
+                    X_scaled = scaler.fit_transform(X)
+                    
+                    # Train model
+                    model.fit(X_scaled, y)
+                    
+                    # Calculate accuracy
+                    y_pred = model.predict(X_scaled)
+                    accuracy = accuracy_score(y, y_pred)
+                    
+                    # Save model and scaler
+                    st.info("Saving model...")
+                    joblib.dump(model, "random_forest_model.joblib")
+                    joblib.dump(scaler, "scaler.joblib")
+                    
+                    # Show results
+                    st.success(f"Model trained successfully with accuracy: {accuracy:.4f}")
+                    
+                    # Show class distribution
+                    st.write("Class Distribution:")
+                    st.write(pd.Series(y).value_counts().to_dict())
+                    
+                    # Show feature importance
+                    if hasattr(model, 'feature_importances_'):
+                        importances = pd.DataFrame({
+                            'feature': features,
+                            'importance': model.feature_importances_
+                        }).sort_values('importance', ascending=False)
+                        
+                        st.write("Top 5 Most Important Features:")
+                        st.dataframe(importances.head())
+                    
+                except Exception as e:
+                    st.error(f"Error during training: {str(e)}")
+                    st.error("Please try again or check the data quality.")
+                    st.write("Data sample for debugging:")
+                    st.write(X.head())
+                    st.write("Target sample:")
+                    st.write(y.head())
 
-    
     # Analyze Live Posts page
     elif app_mode == "Analyze Live Posts":
         st.markdown("<h2 class='sub-header'>Analyze Live Reddit Posts</h2>", unsafe_allow_html=True)
@@ -1289,7 +1113,7 @@ def main():
                                     st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
                                 
                                 with col2:
-                                    st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")  # Remove extra colon
+                                    st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")  # Fixed format
                                 
                                 with col3:
                                     # Feedback buttons
@@ -1362,7 +1186,7 @@ def main():
                                     
                                     with col1:
                                         st.markdown(f"**Prediction**: {'❌ Potentially Fake' if post['is_fake_news'] else '✅ Likely Credible'}")
-                                        st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")
+                                        st.markdown(f"**Confidence**: {max(post['probability_fake'], post['probability_real']):.2f}")  # Fixed format
                                     
                                     with col2:
                                         # Feedback buttons
