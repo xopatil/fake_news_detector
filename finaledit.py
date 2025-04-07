@@ -293,7 +293,7 @@ def check_clickbait(title):
     return 1 if matches >= 1 else 0
 
 # Function to fetch Reddit data (modified from your existing code)
-def fetch_reddit_data(subreddit_name, time_filter, limit=1000):
+def fetch_reddit_data(subreddit_name, time_filter, limit=5000):
     reddit = initialize_reddit()
     conn = setup_database()
     c = conn.cursor()
@@ -599,7 +599,7 @@ def train_model(X, y):
         # Make predictions
         y_pred = model.predict(X_test_scaled)
         
-        # Calculate metrics
+        
         accuracy = accuracy_score(y_test, y_pred)
         report = classification_report(y_test, y_pred, output_dict=True)
         cm = confusion_matrix(y_test, y_pred)
@@ -697,7 +697,7 @@ def main():
     # Sidebar for navigation
     st.sidebar.title("Navigation")
     app_mode = st.sidebar.selectbox("Choose a mode", 
-                                     ["Home", "Fetch Reddit Data", "Train Model", "Analyze Live Posts", "Model Performance"])
+                                     ["Home", "Fetch Reddit Data", "Train Model", "Analyze Live Posts"])
     
     # Check if the model has been trained
     model_path = "random_forest_model.joblib"
@@ -773,7 +773,7 @@ def main():
         # Input for subreddit and time filter
         subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
         time_filter = st.selectbox("Select time filter", ["hour", "day", "week", "month", "year", "all"])
-        limit = st.slider("Number of posts to fetch", min_value=10, max_value=500, value=50)
+        limit = st.slider("Number of posts to fetch", min_value=10, max_value=3500, value=100)  # Modified max_value to 1500
         
         if st.button("Fetch Data"):
             with st.spinner("Fetching data from Reddit..."):
@@ -998,7 +998,7 @@ def main():
                 # Original bulk analysis code
                 subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
                 time_filter = st.selectbox("Select time filter", ["hour", "day", "week"])
-                limit = st.slider("Number of posts to analyze", min_value=5, max_value=100, value=20)
+                limit = st.slider("Number of posts to analyze", min_value=5, max_value=20, value=50)  # Modified max_value to 1500
                 
                 if st.button("Analyze Subreddit"):
                     with st.spinner("Fetching and analyzing posts..."):
@@ -1172,206 +1172,7 @@ def main():
                     else:
                         st.warning("Please enter a Reddit post URL.")
 
-    # Model Performance page
-    elif app_mode == "Model Performance":
-        st.markdown("<h2 class='sub-header'>Model Performance Analysis</h2>", unsafe_allow_html=True)
-        
-        if not model_exists:
-            st.warning("No trained model found. Please go to the 'Train Model' tab to train a model first.")
-        else:
-            # Load the model
-            model = joblib.load("random_forest_model.joblib")
-            scaler = joblib.load("scaler.joblib")
-            
-            # Load feedback data
-            conn = setup_database()
-            feedback_data = pd.read_sql_query(
-                "SELECT * FROM training_data WHERE feedback IS NOT NULL", 
-                conn
-            )
-            conn.close()
-            
-            # Display feedback stats
-            if not feedback_data.empty:
-                # Overall stats
-                st.markdown("<h3 class='sub-header'>Feedback Statistics</h3>", unsafe_allow_html=True)
-                
-                total_feedback = len(feedback_data)
-                fake_count = (feedback_data['feedback'] == 0).sum()
-                real_count = (feedback_data['feedback'] == 1).sum()
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Total Feedback", total_feedback)
-                
-                with col2:
-                    st.metric("Marked as Fake", fake_count)
-                
-                with col3:
-                    st.metric("Marked as Real", real_count)
-                
-                # Evaluate on feedback data
-                st.markdown("<h3 class='sub-header'>Model Evaluation on Feedback Data</h3>", unsafe_allow_html=True)
-                
-                # Prepare features
-                features = [
-                    'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
-                    'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
-                    'title_has_clickbait', 'credibility_score'
-                ]
-                
-                X = feedback_data[features]
-                y = feedback_data['feedback']
-                
-                # Handle missing values
-                X.fillna(0, inplace=True)
-                
-                # Scale features
-                X_scaled = scaler.transform(X)
-                
-                # Make predictions
-                y_pred = model.predict(X_scaled)
-                y_prob = model.predict_proba(X_scaled)
-                
-                # Calculate metrics
-                accuracy = accuracy_score(y, y_pred)
-                report = classification_report(y, y_pred, output_dict=True)
-                cm = confusion_matrix(y, y_pred)
-                
-                # Display metrics
-                st.write(f"**Accuracy**: {accuracy:.4f}")
-                
-                # Confusion matrix
-                st.markdown("<h4>Confusion Matrix</h4>", unsafe_allow_html=True)
-                fig, ax = plt.subplots(figsize=(6, 6))
-                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-                ax.set_xlabel('Predicted')
-                ax.set_ylabel('Actual')
-                ax.set_title('Confusion Matrix')
-                ax.set_xticklabels(['Fake News', 'Credible'])
-                ax.set_yticklabels(['Fake News', 'Credible'])
-                st.pyplot(fig)
-                
-                # Classification report
-                st.markdown("<h4>Classification Report</h4>", unsafe_allow_html=True)
-                report_df = pd.DataFrame(report).transpose()
-                st.dataframe(report_df)
-                
-                # Feature importance
-                st.markdown("<h3 class='sub-header'>Feature Importance</h3>", unsafe_allow_html=True)
-                feature_importance = get_feature_importances(model, features)
-                
-                # Plot feature importances
-                fig, ax = plt.subplots(figsize=(10, 6))
-                sns.barplot(x='importance', y='feature', data=feature_importance, ax=ax)
-                ax.set_xlabel('Importance')
-                ax.set_ylabel('Feature')
-                ax.set_title('Feature Importance')
-                st.pyplot(fig)
-                
-                
-                # Scale features
-                X_scaled = scaler.transform(X)
-                
-                # Make predictions
-                y_pred = model.predict(X_scaled)
-                y_prob = model.predict_proba(X_scaled)
-                
-                # Calculate metrics
-                accuracy = accuracy_score(y, y_pred)
-                report = classification_report(y, y_pred, output_dict=True)
-                cm = confusion_matrix(y, y_pred)
-                
-                # Display metrics
-                st.write(f"**Accuracy**: {accuracy:.4f}")
-                
-                # Confusion matrix
-                st.markdown("<h4>Confusion Matrix</h4>", unsafe_allow_html=True)
-                fig, ax = plt.subplots(figsize=(6, 6))
-                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-                ax.set_xlabel('Predicted')
-                ax.set_ylabel('Actual')
-                ax.set_title('Confusion Matrix')
-                ax.set_xticklabels(['Fake News', 'Credible'])
-                ax.set_yticklabels(['Fake News', 'Credible'])
-                st.pyplot(fig)
-                
-                # Classification report
-                st.markdown("<h4>Classification Report</h4>", unsafe_allow_html=True)
-                report_df = pd.DataFrame(report).transpose()
-                st.dataframe(report_df)
-                
-                # Feature importance
-                st.markdown("<h3 class='sub-header'>Feature Importance</h3>", unsafe_allow_html=True)
-                feature_importance = get_feature_importances(model, features)
-                
-                # Plot feature importances
-                fig, ax = plt.subplots(figsize=(10, 6))
-                sns.barplot(x='importance', y='feature', data=feature_importance, ax=ax)
-                ax.set_xlabel('Importance')
-                ax.set_ylabel('Feature')
-                ax.set_title('Feature Importance')
-                st.pyplot(fig)
-                
-                # Learning curve
-                st.markdown("<h3 class='sub-header'>Learning Progress</h3>", unsafe_allow_html=True)
-                
-                # Get timestamps of feedback entries for a timeline
-                if 'created_utc' in feedback_data.columns:
-                    # Sort by time
-                    timeline_data = feedback_data.sort_values('created_utc')
-                    
-                    # Calculate cumulative accuracy over time
-                    accuracies = []
-                    timestamps = []
-                    feedback_counts = []
-                    
-                    # Start with a minimum number of samples
-                    min_samples = 10
-                    
-                    if len(timeline_data) >= min_samples:
-                        for i in range(min_samples, len(timeline_data), max(1, len(timeline_data) // 20)):
-                            subset = timeline_data.iloc[:i]
-                            
-                            X_subset = subset[features]
-                            y_subset = subset['feedback']
-                            
-                            # Handle missing values
-                            X_subset.fillna(0, inplace=True)
-                            
-                            # Scale features
-                            X_subset_scaled = scaler.transform(X_subset)
-                            
-                            # Make predictions
-                            y_subset_pred = model.predict(X_subset_scaled)
-                            
-                            # Calculate accuracy
-                            subset_accuracy = accuracy_score(y_subset, y_subset_pred)
-                            
-                            accuracies.append(subset_accuracy)
-                            timestamps.append(i)
-                            feedback_counts.append(i)
-                        
-                        # Plot learning curve
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.plot(feedback_counts, accuracies, 'o-', color='blue')
-                        ax.set_xlabel('Number of Feedback Samples')
-                        ax.set_ylabel('Accuracy')
-                        ax.set_title('Learning Curve')
-                        ax.grid(True)
-                        st.pyplot(fig)
-                    else:
-                        st.info(f"Need at least {min_samples} feedback samples to display learning curve. Currently have {len(timeline_data)}.")
-            else:
-                st.info("No feedback data available yet. Provide feedback on posts in the 'Analyze Live Posts' tab.")
-                
-                # Option to generate synthetic data
-                if st.button("Generate Synthetic Feedback Data"):
-                    with st.spinner("Generating synthetic feedback data..."):
-                        synthetic_data = generate_synthetic_training_data(min_samples=100)
-                        st.success(f"Generated {len(synthetic_data)} synthetic data points.")
-                        st.experimental_rerun()  # Rerun to update the interface
+
 
 def extract_post_id_from_url(url):
     """Extract post ID from Reddit URL"""
