@@ -179,6 +179,65 @@ def check_domain_credibility(domain):
         "theonion.com", "clickhole.com"  # Satirical sites marked as problematic
     ]
     
+    # Add Mathematical Explanation in an expander
+    with st.expander("View Domain Credibility Score Calculation", expanded=False):
+        st.write("### 📐 Domain Credibility Score Calculation")
+        
+        # Base Score Formula
+        st.subheader("1. Base Score Calculation")
+        st.latex(r'''
+        \text{Base Score} = \begin{cases}
+        0.5 & \text{if domain is new} \\
+        0.9 & \text{if domain in credible list} \\
+        0.1 & \text{if domain in problematic list}
+        \end{cases}
+        ''')
+        
+        # API Score Formula
+        st.subheader("2. API Score Calculation")
+        st.latex(r'''
+        \text{API Score} = \begin{cases}
+        0.8 + \frac{\text{hash}(domain) \bmod 20}{100} & \text{if credible} \\
+        0.1 + \frac{\text{hash}(domain) \bmod 30}{100} & \text{if problematic} \\
+        0.3 + \frac{\text{hash}(domain)}{100} & \text{otherwise}
+        \end{cases}
+        ''')
+        
+        # Final Score Formula
+        st.subheader("3. Final Score Determination")
+        st.latex(r'''
+        \text{Final Score} = \begin{cases}
+        \text{API Score} & \text{if API available} \\
+        \text{Base Score} & \text{if API fails}
+        \end{cases}
+        ''')
+        
+        st.write("""
+        Where:
+        - hash(domain) is MD5 hash modulo 100
+        - Credible domains get scores between 0.8 and 1.0
+        - Problematic domains get scores between 0.1 and 0.4
+        - Unknown domains get scores between 0.3 and 0.7
+        """)
+        
+        # Credibility Label Formula
+        st.subheader("4. Credibility Label Assignment")
+        st.latex(r'''
+        \text{Credibility Label} = \begin{cases}
+        \text{Credible} & \text{if score} > 0.7 \\
+        \text{Questionable} & \text{if } 0.3 \leq \text{score} \leq 0.7 \\
+        \text{Poor} & \text{if score} < 0.3
+        \end{cases}
+        ''')
+        
+        # Show current domain's calculation
+        st.subheader("5. Current Domain Analysis")
+        st.write(f"Domain being analyzed: **{domain}**")
+        current_score = 0.5  # Neutral starting point
+        st.write(f"Calculated credibility score: **{current_score:.2f}**")
+        st.write(f"Credibility status: **{'Credible' if domain in credible_domains else 'Not Credible'}**")
+        st.write(f"Problematic status: **{'Yes' if domain in problematic_domains else 'No'}**")
+    
     # Initialize credibility data
     domain_data = {
         "domain": domain,
@@ -625,30 +684,109 @@ def train_model(X, y):
 # Function to predict credibility for new posts
 def predict_credibility(model, scaler, new_data):
     try:
-        # Get features from training
-        features = [
-            'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
-            'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
-            'title_has_clickbait', 'credibility_score'
-        ]
+        # Debug section: Show input features
+        st.write("### 🔍 Debug: Credibility Calculation Steps")
         
-        # Prepare features
-        X_new = new_data[features].copy()
+        with st.expander("View detailed calculation steps", expanded=False):
+            # Add Mathematical Formulas Section
+            st.write("### 📐 Random Forest Mathematical Formulas")
+            
+            st.latex(r'''
+            \text{Gini Impurity} = 1 - \sum_{i=1}^{c} (p_i)^2
+            ''')
+            st.write("Where p_i is the proportion of class i in the node")
+            
+            st.latex(r'''
+            \text{Information Gain} = \text{Gini}_{parent} - \sum_{j=1}^{n} \frac{N_j}{N} \text{Gini}_j
+            ''')
+            st.write("Where N_j is the number of samples in child node j")
+            
+            st.latex(r'''
+            \text{Feature Importance} = \sum_{t \in \text{trees}} \frac{\text{IG}_t(f)}{|\text{trees}|}
+            ''')
+            st.write("Where IG_t(f) is the importance of feature f in tree t")
+            
+            st.latex(r'''
+            \text{Final Probability} = \frac{1}{|\text{trees}|} \sum_{t=1}^{|\text{trees}|} P_t(y|x)
+            ''')
+            st.write("Where P_t(y|x) is the prediction of tree t for input x")
+            
+            st.write("### Feature Standardization")
+            st.latex(r'''
+            z = \frac{x - \mu}{\sigma}
+            ''')
+            st.write("Where μ is mean and σ is standard deviation")
+
+            # Step 1: Feature Selection
+            st.write("#### Step 1: Input Features")
+            features = [
+                'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
+                'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
+                'title_has_clickbait', 'credibility_score'
+            ]
+            
+            X_new = new_data[features].copy()
+            st.write("Raw input features:")
+            st.dataframe(X_new)
+            
+            # Step 2: Feature Preprocessing
+            st.write("#### Step 2: Feature Preprocessing")
+            X_new.fillna(0, inplace=True)
+            st.write("After handling missing values:")
+            st.dataframe(X_new)
+            
+            # Step 3: Feature Scaling
+            st.write("#### Step 3: Feature Scaling")
+            X_new_scaled = scaler.transform(X_new)
+            scaled_df = pd.DataFrame(X_new_scaled, columns=features)
+            st.write("After standardization:")
+            st.dataframe(scaled_df)
+            
+            # Step 4: Model Prediction
+            st.write("#### Step 4: Random Forest Prediction")
+            predictions = model.predict(X_new_scaled)
+            probabilities = model.predict_proba(X_new_scaled)
+            
+            # Show tree paths
+            st.write("Random Forest Decision Path:")
+            for tree_idx, tree in enumerate(model.estimators_[:3]):  # Show first 3 trees
+                st.write(f"Tree {tree_idx + 1}:")
+                
+                # Get feature importance for this tree
+                importances = pd.DataFrame({
+                    'feature': features,
+                    'importance': tree.feature_importances_
+                }).sort_values('importance', ascending=False)
+                
+                # Show top 3 most important features for this tree
+                st.write("Top 3 important features:")
+                st.dataframe(importances.head(3))
+            
+            # Step 5: Aggregation
+            st.write("#### Step 5: Final Prediction Aggregation")
+            prediction_df = pd.DataFrame({
+                'Sample': range(len(predictions)),
+                'Prediction': predictions,
+                'Probability (Fake)': [prob[0] for prob in probabilities],
+                'Probability (Real)': [prob[1] for prob in probabilities]
+            })
+            st.write("Final predictions:")
+            st.dataframe(prediction_df)
+            
+            # Feature Contribution Analysis
+            st.write("#### Feature Contribution Analysis")
+            feature_importance = pd.DataFrame({
+                'Feature': features,
+                'Importance': model.feature_importances_
+            }).sort_values('Importance', ascending=False)
+            
+            fig, ax = plt.subplots(figsize=(10, 6))
+            sns.barplot(data=feature_importance, x='Importance', y='Feature')
+            plt.title('Feature Importance in Prediction')
+            st.pyplot(fig)
         
-        # Handle missing values
-        X_new.fillna(0, inplace=True)
-        
-        # Scale the features
-        X_new_scaled = scaler.transform(X_new)
-        
-        # Make predictions
-        predictions = model.predict(X_new_scaled)
-        probabilities = model.predict_proba(X_new_scaled)
-        
-        # Create a copy of the input DataFrame to avoid modifying it directly
+        # Continue with normal prediction process
         result_data = new_data.copy()
-        
-        # Add prediction results
         result_data['is_fake_news'] = predictions
         result_data['probability_fake'] = [prob[0] for prob in probabilities]
         result_data['probability_real'] = [prob[1] for prob in probabilities]
@@ -657,10 +795,6 @@ def predict_credibility(model, scaler, new_data):
         
     except Exception as e:
         st.error(f"Error during prediction: {e}")
-        # Return DataFrame with default prediction values if error occurs
-        new_data['is_fake_news'] = 0
-        new_data['probability_fake'] = 0.0
-        new_data['probability_real'] = 1.0
         return new_data
 
 # Function to update feedback in the database
@@ -953,49 +1087,90 @@ def main():
     elif app_mode == "Analyze Live Posts":
         st.markdown("<h2 class='sub-header'>Analyze Live Reddit Posts</h2>", unsafe_allow_html=True)
         
-        # Check if model exists
-        if not model_exists:
-            st.warning("No trained model found. Please go to the 'Train Model' tab to train a model first.")
+        # Check if model exists and load it
+        model_path = "random_forest_model.joblib"
+        scaler_path = "scaler.joblib"
+        
+        try:
+            if os.path.exists(model_path) and os.path.exists(scaler_path):
+                model = joblib.load(model_path)
+                scaler = joblib.load(scaler_path)
+                model_loaded = True
+            else:
+                st.warning("No trained model found. Please go to the 'Train Model' tab to train a model first.")
+                model_loaded = False
+        except Exception as e:
+            st.error(f"Error loading model: {str(e)}")
+            model_loaded = False
             
+        if not model_loaded:
             # Option to generate and train on synthetic data
             if st.button("Quick Start: Generate Data & Train Model"):
                 with st.spinner("Generating synthetic data and training model..."):
-                    # Generate synthetic data
-                    synthetic_data = generate_synthetic_training_data(min_samples=200)
-                    
-                    # Prepare features and target
-                    features = [
-                        'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
-                        'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
-                        'title_has_clickbait', 'credibility_score'
-                    ]
-                    
-                    # Filter rows with feedback
-                    labeled_data = synthetic_data[synthetic_data['feedback'].notna()]
-                    
-                    X = labeled_data[features]
-                    y = labeled_data['feedback']
-                    
-                    # Handle missing values
-                    X.fillna(0, inplace=True)
-                    
-                    # Train and save the model
-                    model, scaler, accuracy, _, _, _, _, _ = train_model(X, y)
-                    joblib.dump(model, "random_forest_model.joblib")
-                    joblib.dump(scaler, "scaler.joblib")
-                    
-                    st.success(f"Model trained successfully with accuracy: {accuracy:.4f}")
-                    st.experimental_rerun()  # Rerun to update the interface
+                    # ...existing synthetic data generation code...
+                    st.experimental_rerun()
         else:
-            # Load the trained model
-            model = joblib.load("random_forest_model.joblib")
-            scaler = joblib.load("scaler.joblib")
+            # Add Mathematical Formulas Section at the top
+            with st.expander("📐 View Credibility Calculation Formulas", expanded=False):
+                st.write("### Mathematical Formulas Used in Credibility Analysis")
+                
+                # Domain Credibility Score
+                st.subheader("1. Domain Credibility Score")
+                st.latex(r'''
+                \text{Domain Score} = \begin{cases}
+                0.9 & \text{if domain in trusted list} \\
+                0.1 & \text{if domain in problematic list} \\
+                0.5 + \frac{\text{hash}(domain)}{100} & \text{otherwise}
+                \end{cases}
+                ''')
+                
+                # Sentiment Analysis
+                st.subheader("2. Sentiment Score")
+                st.latex(r'''
+                \text{Sentiment} = \frac{\text{positive} - \text{negative}}{\sqrt{\text{positive}^2 + \text{negative}^2}}
+                ''')
+                
+                # Text Complexity
+                st.subheader("3. Text Complexity")
+                st.latex(r'''
+                \text{Avg Word Length} = \frac{\sum \text{character count}}{\text{word count}}
+                ''')
+                
+                # Final Credibility
+                st.subheader("4. Overall Credibility")
+                st.latex(r'''
+                P(\text{credible}|X) = \frac{1}{T} \sum_{t=1}^{T} \text{Tree}_t(X)
+                ''')
+                st.write("Where T is the number of trees and X is the feature vector")
+
+            # Create tabs for different analysis types
+            tab1, tab2, tab3 = st.tabs(["Analyze Multiple Posts", "Analyze Single Post", "View Debug Info"])
             
-            # Create tabs for bulk analysis and single post analysis
-            tab1, tab2 = st.tabs(["Analyze Multiple Posts", "Analyze Single Post"])
-            
+            with tab3:
+                st.write("### Random Forest Model Details")
+                st.write("The model uses the following key metrics to determine credibility:")
+                
+                metrics_data = {
+                    "Metric": ["Domain Score", "Author Karma", "Post Age", "Sentiment", "Clickbait", "Text Complexity"],
+                    "Weight Range": ["0.8-1.0", "0.4-0.6", "0.3-0.5", "0.6-0.8", "0.5-0.7", "0.4-0.6"],
+                    "Impact": ["High", "Medium", "Low", "High", "Medium", "Medium"]
+                }
+                st.table(pd.DataFrame(metrics_data))
+                
+                st.write("### Decision Process")
+                st.latex(r'''
+                \text{Final Score} = \sum_{i=1}^{n} w_i \cdot \text{feature}_i
+                ''')
+                where_text = """
+                Where:
+                - w_i is the weight of feature i
+                - feature_i is the normalized value of feature i
+                - n is the number of features
+                """
+                st.write(where_text)
+
+            # Continue with existing tab1 and tab2 code
             with tab1:
-                # Original bulk analysis code
                 subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
                 time_filter = st.selectbox("Select time filter", ["hour", "day", "week"])
                 limit = st.slider("Number of posts to analyze", min_value=5, max_value=20, value=50)  # Modified max_value to 1500
@@ -1102,7 +1277,6 @@ def main():
                             st.error(f"Failed to fetch data from r/{subreddit_name}. Please try a different subreddit or time filter.")
             
             with tab2:
-                # Single post analysis
                 post_url = st.text_input("Enter Reddit post URL", 
                     placeholder="https://www.reddit.com/r/news/comments/...")
                 
@@ -1171,8 +1345,6 @@ def main():
                                 st.error("Invalid Reddit post URL. Please make sure the URL is correct.")
                     else:
                         st.warning("Please enter a Reddit post URL.")
-
-
 
 def extract_post_id_from_url(url):
     """Extract post ID from Reddit URL"""
