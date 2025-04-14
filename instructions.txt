@@ -1,4 +1,0 @@
-        client_id="",
-        client_secret="",
-        user_agent=""
-        set up this on reddit and make changes in the streamlit.py file
