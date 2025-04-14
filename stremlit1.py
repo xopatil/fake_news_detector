@@ -586,8 +586,8 @@ def fetch_reddit_data(subreddit_name, time_filter, limit=5000):
 # Function to load training data from the database
 def load_training_data():
     conn = setup_database()
-    # Load all labeled training data
-    query = "SELECT * FROM training_data WHERE feedback IS NOT NULL"
+    # Load all training data, not just those with feedback
+    query = "SELECT * FROM training_data WHERE credibility_score IS NOT NULL"
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
@@ -838,32 +838,67 @@ def predict_credibility(model, scaler, new_data):
             # Decision Tree Paths
             st.write("### 2. Decision Tree Paths")
             
-            tree_tabs = st.tabs([f"Tree {i+1}" for i in range(3)])
-            
-            current_trees = model.estimators_[:3]
-            
-            for idx, (tree, tab) in enumerate(zip(current_trees, tree_tabs)):
-                with tab:
-                    if os.path.exists(f"tree_{idx}.png"):
-                        os.remove(f"tree_{idx}.png")
-                    
-                    dot_data = export_graphviz(
-                        tree,
-                        feature_names=features,
-                        class_names=['Fake', 'Real'],
-                        filled=True,
-                        rounded=True,
-                        special_characters=True,
-                        max_depth=3
-                    )
-                    graph = graphviz.Source(dot_data)
-                    
-                    graph.render(f"tree_{idx}", format="png", cleanup=True)
-                    
-                    if os.path.exists(f"tree_{idx}.png"):
-                        st.image(f"tree_{idx}.png", caption=f"Decision Path - Tree {idx + 1} (Updated)")
-                    else:
-                        st.error(f"Failed to generate tree visualization {idx + 1}")
+            # Get fresh training data (fixed query)
+            conn = setup_database()
+            query = """
+            SELECT is_self, score, upvote_ratio, num_comments, author_age_days,
+                   author_karma, sentiment_compound, word_count, avg_word_length,
+                   title_has_clickbait, credibility_score, is_credible
+            FROM training_data 
+            WHERE credibility_score IS NOT NULL"""  # Simplified query to get all valid data
+            fresh_training_data = pd.read_sql_query(query, conn)
+            conn.close()
+
+            if len(fresh_training_data) > 0:
+                # Convert domain_is_credible to is_credible if needed
+                if 'domain_is_credible' in fresh_training_data.columns:
+                    fresh_training_data['is_credible'] = fresh_training_data['is_credible'].fillna(fresh_training_data['domain_is_credible'])
+                
+                # Prepare features for visualization trees
+                X_viz = fresh_training_data[features].fillna(0)
+                y_viz = fresh_training_data['is_credible'].astype(int)
+                
+                # Scale the features
+                X_viz_scaled = scaler.transform(X_viz)
+                
+                # Create visualization trees
+                viz_trees = []
+                for _ in range(3):
+                    tree = RandomForestClassifier(
+                        n_estimators=1,
+                        max_depth=3,
+                        random_state=np.random.randint(0, 1000)
+                    ).fit(X_viz_scaled, y_viz).estimators_[0]
+                    viz_trees.append(tree)
+                
+                tree_tabs = st.tabs([f"Tree {i+1}" for i in range(3)])
+                
+                for idx, (tree, tab) in enumerate(zip(viz_trees, tree_tabs)):
+                    with tab:
+                        if os.path.exists(f"tree_{idx}.png"):
+                            os.remove(f"tree_{idx}.png")
+                        
+                        dot_data = export_graphviz(
+                            tree,
+                            feature_names=features,
+                            class_names=['Fake', 'Real'],
+                            filled=True,
+                            rounded=True,
+                            special_characters=True,
+                            max_depth=3,
+                            proportion=True  # Show proportions instead of counts
+                        )
+                        graph = graphviz.Source(dot_data)
+                        
+                        # Generate new visualization
+                        graph.render(f"tree_{idx}", format="png", cleanup=True)
+                        
+                        if os.path.exists(f"tree_{idx}.png"):
+                            st.image(f"tree_{idx}.png", caption=f"Decision Path - Tree {idx + 1} (Sample size: {len(X_viz)})")
+                        else:
+                            st.error(f"Failed to generate tree visualization {idx + 1}")
+            else:
+                st.warning("No training data available for tree visualization")
 
             # Feature Interaction Analysis
             st.write("### 3. Feature Interaction Analysis")
@@ -1314,20 +1349,37 @@ def main():
                             with col3:
                                 st.metric("Likely Credible", real_count)
                             
-                            # Visualization of results
+                            # Visualization of results (fixed histogram)
                             fig, ax = plt.subplots(figsize=(10, 6))
-                            sns.histplot(
-                                data=result_data, 
-                                x='probability_real', 
-                                hue='is_fake_news',
-                                bins=20, 
-                                kde=True,
-                                ax=ax
-                            )
+                            
+                            try:
+                                # Check if we have enough unique values for a histogram
+                                unique_values = result_data['probability_real'].nunique()
+                                if unique_values > 1:
+                                    # Use distplot for more stable density estimation
+                                    sns.kdeplot(
+                                        data=result_data, 
+                                        x='probability_real',
+                                        hue='is_fake_news',
+                                        fill=True,
+                                        ax=ax
+                                    )
+                                else:
+                                    # Create a bar chart for limited data
+                                    values = result_data['probability_real'].value_counts()
+                                    ax.bar(values.index, values.values, 
+                                          color=['green' if not result_data['is_fake_news'].iloc[0] else 'red'])
+                                    ax.set_ylim(0, values.max() * 1.2)
+                            except Exception as e:
+                                # Fallback to simple bar plot
+                                ax.bar(['Real News', 'Fake News'],
+                                      [len(result_data[~result_data['is_fake_news']]),
+                                       len(result_data[result_data['is_fake_news']])],
+                                      color=['green', 'red'])
+                            
                             ax.set_xlabel('Probability of being credible')
-                            ax.set_ylabel('Count')
+                            ax.set_ylabel('Density' if unique_values > 1 else 'Count')
                             ax.set_title('Distribution of Credibility Scores')
-                            ax.legend(['Fake News', 'Credible'])
                             st.pyplot(fig)
                             
                             # Display individual posts with predictions
