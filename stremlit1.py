@@ -745,7 +745,7 @@ def predict_credibility(model, scaler, new_data):
                    author_karma, sentiment_compound, word_count, avg_word_length,
                    title_has_clickbait, credibility_score, is_credible
             FROM training_data 
-            WHERE credibility_score IS NOT NULL"""  # Simplified query to get all valid data
+            WHERE credibility_score IS NOT NULL"""
             fresh_training_data = pd.read_sql_query(query, conn)
             conn.close()
 
@@ -786,7 +786,7 @@ def predict_credibility(model, scaler, new_data):
                             rounded=True,
                             special_characters=True,
                             max_depth=3,
-                            proportion=True  # Show proportions instead of counts
+                            proportion=True
                         )
                         graph = graphviz.Source(dot_data)
                         
@@ -800,62 +800,8 @@ def predict_credibility(model, scaler, new_data):
             else:
                 st.warning("No training data available for tree visualization")
 
-            # Feature Interaction Analysis
-            st.write("### 3. Feature Interaction Analysis")
-            
-            features_to_plot = feature_importance_df['Feature'][:4].tolist()
-            fig = px.scatter_matrix(
-                X_new[features_to_plot],
-                dimensions=features_to_plot,
-                title="Feature Relationships"
-            )
-            fig.update_layout(height=800)
-            st.plotly_chart(fig)
-
-            # Prediction Confidence Gauge
-            st.write("### 4. Prediction Confidence")
-            
-            max_prob = max(probabilities[0])
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=max_prob * 100,
-                title={'text': f"Confidence in {'Real' if predictions[0] else 'Fake'} News"},
-                gauge={
-                    'axis': {'range': [0, 100]},
-                    'bar': {'color': "darkgreen" if predictions[0] else "darkred"},
-                    'steps': [
-                        {'range': [0, 33], 'color': "lightgray"},
-                        {'range': [33, 66], 'color': "gray"},
-                        {'range': [66, 100], 'color': "darkgray"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "red", 'width': 4},
-                        'thickness': 0.75,
-                        'value': 70
-                    }
-                }
-            ))
-            fig.update_layout(height=400)
-            st.plotly_chart(fig)
-
-            # Tree Voting Distribution
-            st.write("### 5. Ensemble Voting Distribution")
-            
-            tree_votes = [tree.predict(X_new_scaled)[0] for tree in model.estimators_]
-            fake_votes = sum(1 for vote in tree_votes if vote == 0)
-            real_votes = sum(1 for vote in tree_votes if vote == 1)
-            
-            fig = go.Figure(data=[go.Pie(
-                labels=['Fake News', 'Real News'],
-                values=[fake_votes, real_votes],
-                hole=.3,
-                marker=dict(colors=['#FF4B4B', '#00CC66'])
-            )])
-            fig.update_layout(
-                title="Tree Voting Distribution",
-                annotations=[dict(text=f'Total Trees<br>{len(tree_votes)}', x=0.5, y=0.5, font_size=20, showarrow=False)]
-            )
-            st.plotly_chart(fig)
+            # Store analysis results in session state
+            st.session_state['analysis_results'] = result_data
 
         return result_data
 
