@@ -17,6 +17,11 @@ import hashlib
 from urllib.parse import urlparse
 import joblib
 import os
+import graphviz
+from sklearn.tree import export_graphviz, plot_tree
+import plotly.graph_objects as go
+import plotly.express as px
+import plotly.figure_factory as ff
 
 # Download NLTK resources if not already downloaded
 try:
@@ -76,6 +81,66 @@ st.markdown("""
         padding: 1rem;
         border-radius: 5px;
         background-color: #f0f0f0;
+    }
+    
+    /* Decision Tree Analysis Styles */
+    .tree-container {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 10px 0;
+        border: 1px solid #dee2e6;
+    }
+    
+    .feature-importance {
+        background: linear-gradient(135deg, #f6f8fa 0%, #ffffff 100%);
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .credible-post {
+        border-left: 5px solid #28a745;
+        background: linear-gradient(to right, #f0fff4, #ffffff);
+        padding: 15px;
+        margin: 10px 0;
+        border-radius: 0 8px 8px 0;
+    }
+    
+    .calculation-box {
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    
+    .metric-label {
+        font-size: 14px;
+        color: #6c757d;
+        text-transform: uppercase;
+    }
+    
+    .decision-path {
+        border-left: 3px dashed #6c757d;
+        padding-left: 15px;
+        margin: 10px 0;
+    }
+    
+    .feature-highlight {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: rgba(0,123,255,0.1);
+        color: #0056b3;
+        font-family: monospace;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -684,41 +749,9 @@ def train_model(X, y):
 # Function to predict credibility for new posts
 def predict_credibility(model, scaler, new_data):
     try:
-        # Debug section: Show input features
-        st.write("### 🔍 Debug: Credibility Calculation Steps")
+        st.write("### 🔍 Interactive Decision Tree Analysis")
         
-        with st.expander("View detailed calculation steps", expanded=False):
-            # Add Mathematical Formulas Section
-            st.write("### 📐 Random Forest Mathematical Formulas")
-            
-            st.latex(r'''
-            \text{Gini Impurity} = 1 - \sum_{i=1}^{c} (p_i)^2
-            ''')
-            st.write("Where p_i is the proportion of class i in the node")
-            
-            st.latex(r'''
-            \text{Information Gain} = \text{Gini}_{parent} - \sum_{j=1}^{n} \frac{N_j}{N} \text{Gini}_j
-            ''')
-            st.write("Where N_j is the number of samples in child node j")
-            
-            st.latex(r'''
-            \text{Feature Importance} = \sum_{t \in \text{trees}} \frac{\text{IG}_t(f)}{|\text{trees}|}
-            ''')
-            st.write("Where IG_t(f) is the importance of feature f in tree t")
-            
-            st.latex(r'''
-            \text{Final Probability} = \frac{1}{|\text{trees}|} \sum_{t=1}^{|\text{trees}|} P_t(y|x)
-            ''')
-            st.write("Where P_t(y|x) is the prediction of tree t for input x")
-            
-            st.write("### Feature Standardization")
-            st.latex(r'''
-            z = \frac{x - \mu}{\sigma}
-            ''')
-            st.write("Where μ is mean and σ is standard deviation")
-
-            # Step 1: Feature Selection
-            st.write("#### Step 1: Input Features")
+        with st.expander("View Visual Decision Process", expanded=True):
             features = [
                 'is_self', 'score', 'upvote_ratio', 'num_comments', 'author_age_days',
                 'author_karma', 'sentiment_compound', 'word_count', 'avg_word_length',
@@ -726,65 +759,193 @@ def predict_credibility(model, scaler, new_data):
             ]
             
             X_new = new_data[features].copy()
-            st.write("Raw input features:")
-            st.dataframe(X_new)
-            
-            # Step 2: Feature Preprocessing
-            st.write("#### Step 2: Feature Preprocessing")
             X_new.fillna(0, inplace=True)
-            st.write("After handling missing values:")
-            st.dataframe(X_new)
-            
-            # Step 3: Feature Scaling
-            st.write("#### Step 3: Feature Scaling")
             X_new_scaled = scaler.transform(X_new)
-            scaled_df = pd.DataFrame(X_new_scaled, columns=features)
-            st.write("After standardization:")
-            st.dataframe(scaled_df)
+
+            # 1. Feature Importance Sunburst Chart
+            st.write("### 1. Feature Importance Distribution")
             
-            # Step 4: Model Prediction
-            st.write("#### Step 4: Random Forest Prediction")
-            predictions = model.predict(X_new_scaled)
-            probabilities = model.predict_proba(X_new_scaled)
-            
-            # Show tree paths
-            st.write("Random Forest Decision Path:")
-            for tree_idx, tree in enumerate(model.estimators_[:3]):  # Show first 3 trees
-                st.write(f"Tree {tree_idx + 1}:")
-                
-                # Get feature importance for this tree
-                importances = pd.DataFrame({
-                    'feature': features,
-                    'importance': tree.feature_importances_
-                }).sort_values('importance', ascending=False)
-                
-                # Show top 3 most important features for this tree
-                st.write("Top 3 important features:")
-                st.dataframe(importances.head(3))
-            
-            # Step 5: Aggregation
-            st.write("#### Step 5: Final Prediction Aggregation")
-            prediction_df = pd.DataFrame({
-                'Sample': range(len(predictions)),
-                'Prediction': predictions,
-                'Probability (Fake)': [prob[0] for prob in probabilities],
-                'Probability (Real)': [prob[1] for prob in probabilities]
-            })
-            st.write("Final predictions:")
-            st.dataframe(prediction_df)
-            
-            # Feature Contribution Analysis
-            st.write("#### Feature Contribution Analysis")
-            feature_importance = pd.DataFrame({
+            # Create a more visible and organized sunburst chart
+            feature_importance_df = pd.DataFrame({
                 'Feature': features,
                 'Importance': model.feature_importances_
             }).sort_values('Importance', ascending=False)
             
-            fig, ax = plt.subplots(figsize=(10, 6))
-            sns.barplot(data=feature_importance, x='Importance', y='Feature')
-            plt.title('Feature Importance in Prediction')
-            st.pyplot(fig)
-        
+            # Create hierarchical data for better visualization
+            categories = {
+                'Content': ['sentiment_compound', 'word_count', 'avg_word_length', 'title_has_clickbait'],
+                'Engagement': ['score', 'upvote_ratio', 'num_comments'],
+                'Source': ['is_self', 'credibility_score'],
+                'Author': ['author_age_days', 'author_karma']
+            }
+            
+            # Prepare data for sunburst
+            sunburst_data = []
+            for category, feats in categories.items():
+                # Add category
+                sunburst_data.append({
+                    'labels': category,
+                    'parents': '',
+                    'values': sum(feature_importance_df[feature_importance_df['Feature'].isin(feats)]['Importance'])
+                })
+                # Add features
+                for feat in feats:
+                    if feat in feature_importance_df['Feature'].values:
+                        importance = feature_importance_df[feature_importance_df['Feature'] == feat]['Importance'].iloc[0]
+                        sunburst_data.append({
+                            'labels': feat,
+                            'parents': category,
+                            'values': importance
+                        })
+            
+            # Convert to DataFrame for Plotly
+            sunburst_df = pd.DataFrame(sunburst_data)
+            
+            # Create enhanced sunburst chart
+            fig_sunburst = go.Figure(go.Sunburst(
+                labels=sunburst_df['labels'],
+                parents=sunburst_df['parents'],
+                values=sunburst_df['values'],
+                branchvalues="total",
+                maxdepth=2,
+                hovertemplate='<b>%{label}</b><br>Importance: %{value:.3f}<extra></extra>',
+                ))
+            
+            fig_sunburst.update_layout(
+                title={
+                    'text': "Feature Importance Hierarchy",
+                    'y': 0.95,
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'yanchor': 'top'
+                },
+                width=800,
+                height=800,
+                showlegend=False
+            )
+            
+            # Display the chart with a light background
+            st.plotly_chart(fig_sunburst, use_container_width=True)
+            
+            # Add a table view of feature importances
+            st.write("#### Feature Importance Table")
+            importance_table = feature_importance_df.copy()
+            importance_table['Importance'] = importance_table['Importance'].apply(lambda x: f"{x:.3f}")
+            st.table(importance_table)
+
+            # 2. Interactive Decision Path Visualization
+            st.write("### 2. Decision Tree Paths")
+            
+            # Create tabs for different trees
+            tree_tabs = st.tabs([f"Tree {i+1}" for i in range(3)])
+            
+            for idx, (tree, tab) in enumerate(zip(model.estimators_[:3], tree_tabs)):
+                with tab:
+                    # Create decision tree visualization using graphviz
+                    dot_data = export_graphviz(
+                        tree,
+                        feature_names=features,
+                        class_names=['Fake', 'Real'],
+                        filled=True,
+                        rounded=True,
+                        special_characters=True,
+                        max_depth=3  # Limit depth for clarity
+                    )
+                    graph = graphviz.Source(dot_data)
+                    
+                    # Save and display the tree
+                    graph.render(f"tree_{idx}", format="png", cleanup=True)
+                    st.image(f"tree_{idx}.png", caption=f"Decision Path - Tree {idx + 1}")
+                    
+                    # Show feature importance for this tree
+                    st.write(f"#### Key Features in Tree {idx + 1}")
+                    importances = pd.DataFrame({
+                        'Feature': features,
+                        'Importance': tree.feature_importances_
+                    }).sort_values('Importance', ascending=False)
+                    
+                    # Create a horizontal bar chart
+                    fig = go.Figure(go.Bar(
+                        x=importances['Importance'][:5],
+                        y=importances['Feature'][:5],
+                        orientation='h',
+                        marker=dict(
+                            color=importances['Importance'][:5],
+                            colorscale='Viridis'
+                        )
+                    ))
+                    fig.update_layout(
+                        title=f"Top 5 Features - Tree {idx + 1}",
+                        xaxis_title="Importance",
+                        yaxis_title="Feature",
+                        height=400
+                    )
+                    st.plotly_chart(fig)
+
+            # 3. Interactive Feature Analysis
+            st.write("### 3. Feature Interaction Analysis")
+            
+            # Create an interactive scatter plot matrix
+            features_to_plot = importances['Feature'][:4].tolist()  # Top 4 important features
+            fig = px.scatter_matrix(
+                X_new[features_to_plot],
+                dimensions=features_to_plot,
+                title="Feature Relationships"
+            )
+            fig.update_layout(height=800)
+            st.plotly_chart(fig)
+
+            # 4. Prediction Confidence Gauge
+            st.write("### 4. Prediction Confidence")
+            
+            predictions = model.predict(X_new_scaled)
+            probabilities = model.predict_proba(X_new_scaled)
+            
+            # Create a gauge chart for prediction confidence
+            max_prob = max(probabilities[0])
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=max_prob * 100,
+                title={'text': f"Confidence in {'Real' if predictions[0] else 'Fake'} News"},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "darkgreen" if predictions[0] else "darkred"},
+                    'steps': [
+                        {'range': [0, 33], 'color': "lightgray"},
+                        {'range': [33, 66], 'color': "gray"},
+                        {'range': [66, 100], 'color': "darkgray"}
+                    ],
+                    'threshold': {
+                        'line': {'color': "red", 'width': 4},
+                        'thickness': 0.75,
+                        'value': 70
+                    }
+                }
+            ))
+            fig.update_layout(height=400)
+            st.plotly_chart(fig)
+
+            # 5. Tree Voting Distribution
+            st.write("### 5. Ensemble Voting Distribution")
+            
+            # Get votes from all trees
+            tree_votes = [tree.predict(X_new_scaled)[0] for tree in model.estimators_]
+            fake_votes = sum(1 for vote in tree_votes if vote == 0)
+            real_votes = sum(1 for vote in tree_votes if vote == 1)
+            
+            # Create an animated pie chart
+            fig = go.Figure(data=[go.Pie(
+                labels=['Fake News', 'Real News'],
+                values=[fake_votes, real_votes],
+                hole=.3,
+                marker=dict(colors=['#FF4B4B', '#00CC66'])
+            )])
+            fig.update_layout(
+                title="Tree Voting Distribution",
+                annotations=[dict(text=f'Total Trees<br>{len(tree_votes)}', x=0.5, y=0.5, font_size=20, showarrow=False)]
+            )
+            st.plotly_chart(fig)
+
         # Continue with normal prediction process
         result_data = new_data.copy()
         result_data['is_fake_news'] = predictions
@@ -1087,6 +1248,9 @@ def main():
     elif app_mode == "Analyze Live Posts":
         st.markdown("<h2 class='sub-header'>Analyze Live Reddit Posts</h2>", unsafe_allow_html=True)
         
+        # Create main tabs
+        main_tabs = st.tabs(["Multiple Posts", "Single Post", "Credible Posts"])
+        
         # Check if model exists and load it
         model_path = "random_forest_model.joblib"
         scaler_path = "scaler.joblib"
@@ -1144,33 +1308,7 @@ def main():
                 st.write("Where T is the number of trees and X is the feature vector")
 
             # Create tabs for different analysis types
-            tab1, tab2, tab3 = st.tabs(["Analyze Multiple Posts", "Analyze Single Post", "View Debug Info"])
-            
-            with tab3:
-                st.write("### Random Forest Model Details")
-                st.write("The model uses the following key metrics to determine credibility:")
-                
-                metrics_data = {
-                    "Metric": ["Domain Score", "Author Karma", "Post Age", "Sentiment", "Clickbait", "Text Complexity"],
-                    "Weight Range": ["0.8-1.0", "0.4-0.6", "0.3-0.5", "0.6-0.8", "0.5-0.7", "0.4-0.6"],
-                    "Impact": ["High", "Medium", "Low", "High", "Medium", "Medium"]
-                }
-                st.table(pd.DataFrame(metrics_data))
-                
-                st.write("### Decision Process")
-                st.latex(r'''
-                \text{Final Score} = \sum_{i=1}^{n} w_i \cdot \text{feature}_i
-                ''')
-                where_text = """
-                Where:
-                - w_i is the weight of feature i
-                - feature_i is the normalized value of feature i
-                - n is the number of features
-                """
-                st.write(where_text)
-
-            # Continue with existing tab1 and tab2 code
-            with tab1:
+            with main_tabs[0]:  # Multiple Posts tab
                 subreddit_name = st.text_input("Enter subreddit name (without r/)", "news")
                 time_filter = st.selectbox("Select time filter", ["hour", "day", "week"])
                 limit = st.slider("Number of posts to analyze", min_value=5, max_value=20, value=50)  # Modified max_value to 1500
@@ -1273,10 +1411,99 @@ def main():
                                 
                                 # Add a small space between posts
                                 st.markdown("<br>", unsafe_allow_html=True)
-                        else:
-                            st.error(f"Failed to fetch data from r/{subreddit_name}. Please try a different subreddit or time filter.")
+                            
+                            # Store analysis results in session state
+                            st.session_state['analysis_results'] = result_data
+                            
+                            # Credible Posts Analysis
+                            with main_tabs[2]:  # Credible Posts Analysis
+                                if 'analysis_results' in st.session_state:
+                                    result_data = st.session_state['analysis_results']
+                                    credible_posts = result_data[result_data['is_fake_news'] == 0].copy()
+                                    
+                                    st.markdown("### 🌟 Highly Credible Posts Analysis")
+                                    st.write(f"Found {len(credible_posts)} credible posts")
+                                    
+                                    if len(credible_posts) > 0:
+                                        credible_posts = credible_posts.sort_values('probability_real', ascending=False)
+                                        
+                                        # Update formula to match actual calculation
+                                        st.markdown("### 📊 Confidence Score Calculation")
+                                        st.write("""
+                                        The overall confidence score is calculated as the model's probability 
+                                        of the post being credible, while the component scores provide additional insight:
+                                        """)
+                                        
+                                        for _, post in credible_posts.iterrows():
+                                            with st.expander(f"{post['title'][:100]}..."):
+                                                # Update to show both model confidence and component analysis
+                                                st.markdown("#### Model Confidence")
+                                                st.metric("Model Confidence Score", f"{post['probability_real']:.2f}")
+                                                
+                                                st.markdown("#### Component Analysis")
+                                                # Calculate component scores (these are supplementary metrics)
+                                                domain_weight = 0.3
+                                                domain_score = post['credibility_score'] * domain_weight
+                                                
+                                                engagement_weight = 0.2
+                                                engagement_score = (
+                                                    (post['upvote_ratio'] * 0.7 + 
+                                                     min(post['num_comments'], 1000)/1000 * 0.3)
+                                                ) * engagement_weight
+                                                
+                                                content_weight = 0.3
+                                                content_score = (
+                                                    ((1 - post['title_has_clickbait']) * 0.4 + 
+                                                     (post['sentiment_compound'] + 1)/2 * 0.3 +
+                                                     min(post['word_count'], 500)/500 * 0.3)
+                                                ) * content_weight
+                                                
+                                                author_weight = 0.2
+                                                author_score = (
+                                                    (min(post['author_age_days'], 1000)/1000 * 0.5 + 
+                                                     min(post['author_karma'], 10000)/10000 * 0.5)
+                                                ) * author_weight
+                                                
+                                                # Display component scores
+                                                cols = st.columns(4)
+                                                with cols[0]:
+                                                    st.metric("Domain", f"{domain_score:.2f}")
+                                                with cols[1]:
+                                                    st.metric("Engagement", f"{engagement_score:.2f}")
+                                                with cols[2]:
+                                                    st.metric("Content", f"{content_score:.2f}")
+                                                with cols[3]:
+                                                    st.metric("Author", f"{author_score:.2f}")
+                                                
+                                                # Show component total
+                                                component_total = domain_score + engagement_score + content_score + author_score
+                                                st.markdown("#### Component Score Total")
+                                                st.metric("Total Component Score", f"{component_total:.2f}")
+                                                
+                                                # Explain the difference
+                                                st.info("""
+                                                Note: The Model Confidence Score is based on the Random Forest model's prediction probability, 
+                                                while the Component Score provides a complementary analysis of the post's credibility factors.
+                                                These scores may differ as they measure credibility using different approaches.
+                                                """)
+                                                
+                                                # Display raw metrics
+                                                st.markdown("#### Raw Metrics")
+                                                metrics_cols = st.columns(3)
+                                                with metrics_cols[0]:
+                                                    st.write(f"Domain Credibility: {post['credibility_score']:.2f}")
+                                                    st.write(f"Upvote Ratio: {post['upvote_ratio']:.2f}")
+                                                with metrics_cols[1]:
+                                                    st.write(f"Comments: {post['num_comments']}")
+                                                    st.write(f"Sentiment: {post['sentiment_compound']:.2f}")
+                                                with metrics_cols[2]:
+                                                    st.write(f"Author Age: {post['author_age_days']:.0f} days")
+                                                    st.write(f"Author Karma: {post['author_karma']:,}")
+                                    else:
+                                        st.warning("No credible posts found in the current analysis.")
+                            # ...existing code...
             
-            with tab2:
+            with main_tabs[1]:  # Single Post tab
                 post_url = st.text_input("Enter Reddit post URL", 
                     placeholder="https://www.reddit.com/r/news/comments/...")
                 
