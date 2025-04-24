@@ -156,9 +156,9 @@ st.markdown("""
 def initialize_reddit():
     # You should replace these with your Reddit API credentials
     return praw.Reddit(
-        client_id="_lFaAZ3uPaJdeH6lmwCGpQ",
-        client_secret="FzjkiQRClWTWJBm8azaLh1GphPzrMA",
-        user_agent="script:fake newss:1.0 (by u/Mission-Host-1649)"
+        client_id="",
+        client_secret="",
+        user_agent=""
     )
 
 # Function to extract domain from URL (already defined in your code)
